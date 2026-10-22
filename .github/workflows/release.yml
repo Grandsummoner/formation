@@ -1,1 +1,69 @@
-as
+# Build NavyArp2 on GitHub, attach the .fwsc to a release and publish the web installer (GitHub Pages).
+#   - push a tag `v1.0` (X.Y, one digit each), or
+#   - run it by hand: Actions > release > Run workflow (give a version).
+# One-time setup: Settings > Pages > Source: "GitHub Actions".
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version X.Y (one digit each, e.g. 1.0)"
+        default: "1.0"
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: release
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pillow markdown
+      - name: Version
+        id: v
+        run: |
+          V="${{ github.event.inputs.version }}"
+          if [ -z "$V" ]; then V="${GITHUB_REF_NAME#v}"; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - name: Host-mode test (the arp and the screens run on this computer)
+        run: ./tests/run_host.sh tests/full.txt > host.log && tail -3 host.log
+      - name: JieLi toolchain (Linux, from JieLi)
+        run: tools/get_toolchain.sh
+      - name: JieLi AC79 SDK (three files go into the package; Apache-2.0)
+        run: git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK
+      - name: Build
+        run: ./build.sh --release "${{ steps.v.outputs.version }}"
+      - name: Site (web installer, manual, the package)
+        run: python3 tools/make_site.py "build/navyarp2-${{ steps.v.outputs.version }}.fwsc" "${{ steps.v.outputs.version }}" site "https://github.com/${{ github.repository }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: navyarp2-${{ steps.v.outputs.version }}
+          path: build/navyarp2-${{ steps.v.outputs.version }}.fwsc
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/navyarp2-${{ steps.v.outputs.version }}.fwsc
+          generate_release_notes: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

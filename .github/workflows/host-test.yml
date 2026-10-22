@@ -1,0 +1,15 @@
+# Every push: the firmware compiles and runs in host mode (tests/host.c): engine, controls and screens, no hardware.
+name: host-test
+on: [push, pull_request]
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pillow
+      - run: ./tests/run_host.sh tests/full.txt
+      - name: No floating point, no 64-bit division (docs/RULES.md)
+        run: "! grep -nE '\\b(float|double|long long|int64_t|uint64_t)\\b' firmware/src/navyarp2.c"
