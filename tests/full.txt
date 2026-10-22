@@ -1,0 +1,105 @@
+# NavyArp2 host test: a long run through the controls.  T keys MASK | btn ID | btnup ID | enc ID N | midi ST D1 D2 | shot | end
+# buttons: 0 OCT- 1 OCT+ 2 FX 3 SEL 4 ENV 5 LFO 6 EDIT 7 GLO 8 HOME 9 SAVE 10 ARP 11 SEQ 12 PLAY 13 REC
+# encoders: 0 SELECT 1 ALGORITHM 2..5 KNOB1..4 6 PRESETS
+# white keys (lower row 1..16): 0x1 0x4 0x10 0x40 0x80 0x200 0x800 0x1000 ...   black keys (upper row 1..11): 0x2 0x8 0x20 0x100 0x400 0x2000 0x8000 0x20000 0x100000(A) 0x400000(B) 0x2000000(mute)
+# POLY on (SEL); RANDOM page 2 (ALGORITHM): harmony and chaos up
+1300 btn 3
+1320 btnup 3
+1400 enc 1 1
+1500 enc 3 30
+1600 enc 4 12
+1800 shot
+# dice MELO on the RANDOM page (upper key 1), then back
+1900 keys 0x2
+1950 keys 0x0
+# hold a chord F3 A3 C4, PLAY
+2000 keys 0x91
+2100 btn 12
+2120 btnup 12
+3000 shot
+# crossfade towards B
+3100 enc 5 40
+4000 shot
+# the step level of step 2 (hold upper key 2 and turn Knob 1)
+4100 keys 0x99
+4200 enc 2 -20
+4400 keys 0x91
+4500 shot
+# LFO page 1: row MORPH, speed and depth
+4600 btn 5
+4620 btnup 5
+4700 enc 3 2
+4800 enc 4 15
+5000 shot
+# FX page, timbre of A
+5100 btn 2
+5120 btnup 2
+5200 enc 2 20
+5400 shot
+# GLO page: BPM
+5500 btn 7
+5520 btnup 7
+5600 enc 2 40
+5800 shot
+5900 btn 8
+5920 btnup 8
+# edit scene B, other instrument
+6000 keys 0x400091
+6050 keys 0x91
+6100 enc 6 1
+6150 enc 6 1
+6400 shot
+# mute: hold the mute key, tap step 3
+6500 keys 0x2000091
+6550 keys 0x2000191
+6600 keys 0x2000091
+6650 keys 0x91
+6800 shot
+# Freeze on and off
+7000 btn 13
+7020 btnup 13
+7600 shot
+7700 btn 13
+7720 btnup 13
+# Latch (long press ARP), then let go of the keys: it keeps playing
+8000 btn 10
+8700 btnup 10
+8800 keys 0x0
+9800 shot
+# SEQ: hold step key 1, tap a note
+10000 btn 11
+10020 btnup 11
+10100 keys 0x2
+10200 keys 0x82
+10300 keys 0x2
+10400 keys 0x0
+11000 shot
+# save to slot 4 (short press, then white key 4)
+11100 btn 9
+11150 btnup 9
+11200 keys 0x40
+11300 keys 0x0
+11600 shot
+# recall mode (long press), pick slot 4
+11800 btn 9
+12500 btnup 9
+12600 keys 0x40
+12700 keys 0x0
+12900 shot
+13000 btn 9
+13700 btnup 9
+# SCALE, SYSTEM, COPY pages
+13800 enc 0 1
+13900 enc 2 3
+14000 enc 3 4
+14300 shot
+15000 enc 0 1
+15100 enc 0 1
+15200 enc 2 1
+15500 shot
+16000 enc 0 -1
+16100 enc 2 1
+16400 shot
+17500 enc 6 1
+17700 shot
+20000 end

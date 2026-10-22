@@ -1,0 +1,14 @@
+# NavyArp2 in host mode: T keys MASK | T btn ID | T btnup ID | T enc ID N | T midi ST D1 D2 | T shot | T end
+# buttons: 0 OCT- 1 OCT+ 2 FX 3 SEL 4 ENV 5 LFO 6 EDIT 7 GLO 8 HOME 9 SAVE 10 ARP 11 SEQ 12 PLAY 13 REC
+# encoders: 0 SELECT 1 ALGORITHM 2..5 KNOB1..4 6 PRESETS
+# keys: bit k, k = 0 F3 ... 26 G5; white keys 0 2 4 5 7 9 11 12 14 16 17 19 21 23 24 26
+1500 shot
+1600 keys 0x80
+1700 keys 0x0
+1800 btn 12
+1801 btnup 12
+2500 shot
+6000 shot
+6100 enc 3 6
+6200 shot
+8000 end
