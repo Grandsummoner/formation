@@ -24,12 +24,12 @@ you whether the problem is in the code or in the toolchain.
 
 ## Build and try it on your own computer
 
-* **No hardware:** `tests/run_host.sh tests/full.txt` runs the firmware on this computer (needs a C compiler and Pillow):
+* **No hardware:** `sh tests/run_host.sh tests/full.txt` runs the firmware on this computer (needs a C compiler and Pillow):
   the MIDI it sends is printed, the sound goes to `build/host/navyarp2.wav`, and the screens come out as PNG.
   `tests/host.c` documents the script format (buttons, knobs, keys, MIDI in).
-* **The firmware:** needs Linux x86-64 (macOS through Docker). `tools/get_toolchain.sh`, then clone the SDK
+* **The firmware:** needs Linux x86-64 (macOS through Docker). `sh tools/get_toolchain.sh`, then clone the SDK
   (`git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK`),
-  then `./build.sh --release 1.0`. The package is `build/navyarp2-1.0.fwsc`.
+  then `sh build.sh --release 1.0`. The package is `build/navyarp2-1.0.fwsc`.
 
 ## Layout
 
