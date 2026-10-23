@@ -1,4 +1,4 @@
-# Build NavyArp2 on GitHub, attach the .fwsc to a release and publish the web installer (GitHub Pages).
+# Build Formation on GitHub, attach the .fwsc to a release and publish the web installer (GitHub Pages).
 #   - push a tag `v1.0` (X.Y, one digit each), or
 #   - run it by hand: Actions > release > Run workflow (give a version).
 # One-time setup: Settings > Pages > Source: "GitHub Actions".
@@ -44,16 +44,16 @@ jobs:
       - name: Build
         run: sh build.sh --release "${{ steps.v.outputs.version }}"
       - name: Site (web installer, manual, the package)
-        run: python3 tools/make_site.py "build/navyarp2-${{ steps.v.outputs.version }}.fwsc" "${{ steps.v.outputs.version }}" site "https://github.com/${{ github.repository }}"
+        run: python3 tools/make_site.py "build/formation-${{ steps.v.outputs.version }}.fwsc" "${{ steps.v.outputs.version }}" site "https://github.com/${{ github.repository }}"
       - uses: actions/upload-artifact@v4
         with:
-          name: navyarp2-${{ steps.v.outputs.version }}
-          path: build/navyarp2-${{ steps.v.outputs.version }}.fwsc
+          name: formation-${{ steps.v.outputs.version }}
+          path: build/formation-${{ steps.v.outputs.version }}.fwsc
       - name: Attach to the release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: build/navyarp2-${{ steps.v.outputs.version }}.fwsc
+          files: build/formation-${{ steps.v.outputs.version }}.fwsc
           generate_release_notes: true
       - uses: actions/upload-pages-artifact@v3
         with:
