@@ -42,12 +42,16 @@
   <ol class="steps">
     <li>Use <b>Chrome</b> or <b>Edge</b> on a computer.</li>
     <li>Switch the FM-1 on and connect it <b>straight to the computer</b> with a USB cable that carries data.
-      Close other music apps that might hold its MIDI port.</li>
+      Close other music apps and tabs that might hold its MIDI port (the M-VAVE Workbench, a DAW, other installers).</li>
+    <li><b>On the newest official firmware (V16)?</b> Community installers cannot see it. Hold <b>OCT-</b> and
+      <b>OCT+</b> for 5 seconds to put the FM-1 in <b>update mode</b>, then go on.</li>
     <li>Press <b>Install NavyArp2</b> and allow MIDI access when the browser asks.</li>
     <li>Wait until it says it is done. <b>Do not unplug the FM-1 while it writes.</b></li>
   </ol>
 
   <p><button id="go" disabled>Install NavyArp2</button></p>
+  <p class="small">Or install a <b>.fwsc file from your computer</b> instead: <input type="file" id="file" accept=".fwsc"></p>
+  <p class="small" id="fileinfo"></p>
   <progress id="bar" max="100" value="0"></progress>
   <p id="status"></p>
 
@@ -79,12 +83,13 @@ const $ = (id) => document.getElementById(id);
 const meta = /*META*/;
 const MSG = {
   nomidi: "This browser cannot do it. Open the page in Chrome or Edge.",
+  notpkg: "That file is not a package this page can install: it needs an FM-1_NNN identity and the Felucca update loader (or be M-VAVE's official V15 file).",
   loadfail: "Could not load: ", badpkg: "The file to install is damaged. Reload the page.",
   start: "Starting", verify: "Verifying", loader: "Switching to update mode", write: "Writing", reboot: "Restarting",
   done: "Done. Hold OCT- while switching on only if it does not start.", stopped: "Stopped. Replug the USB cable and press Install again.",
   error: "Error: ",
   denied: "MIDI (SysEx) access was not allowed. Allow MIDI in the site settings (address bar) and press Install again.",
-  notfound: "FM-1 not found. Check the USB cable (a data cable), close other apps that use MIDI, and press Install again.",
+  notfound: "FM-1 not found. On the official V16 firmware: hold OCT- and OCT+ for 5 seconds (update mode), then press Install again. Otherwise check the USB cable (a data cable), close other apps and tabs that use MIDI (Workbench, DAW, other installers), and press Install again.",
   model: "The connected device is not an FM-1.",
   lost: "The USB connection was lost. Replug it and press Install again.",
   noloader: "The FM-1 in update mode was not found. Replug the USB cable and press Install again (it stays in update mode until it is finished).",
@@ -94,7 +99,7 @@ const MSG = {
 };
 const say = (k, arg = "") => { $("status").textContent = (MSG[k] || k) + arg; };
 const log = (t) => { $("log").textContent += t + "\n"; };
-let image = null, writing = false;
+let image = null, product = meta.product, writing = false;
 $("ver").textContent = `version ${meta.version}  ·  identity ${meta.product}`;
 if (meta.source) $("src").innerHTML = `Source: <a href="${meta.source}">${meta.source.replace("https://", "")}</a>.`;
 window.addEventListener("beforeunload", (e) => { if (writing) { e.preventDefault(); e.returnValue = MSG.leave; } });
@@ -107,9 +112,42 @@ window.addEventListener("beforeunload", (e) => { if (writing) { e.preventDefault
     const pkg = new Uint8Array(await r.arrayBuffer());
     if (productOf(pkg) !== meta.product) { say("badpkg"); return; }
     image = logicalImage(pkg);
+    product = meta.product;
     $("go").disabled = false;
   } catch (e) { say("loadfail", e.message); }
 })();
+
+const hasLoader = (b) => {
+  const k = new TextEncoder().encode("FELUCCA-LOADER-1");
+  outer: for (let i = 0; i <= b.length - k.length; i++) {
+    for (let j = 0; j < k.length; j++) if (b[i + j] !== k[j]) continue outer;
+    return true;
+  }
+  return false;
+};
+$("file").addEventListener("change", async () => {
+  const f = $("file").files[0];
+  if (!f) return;
+  try {
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    const sha = await sha256hex(bytes);
+    let prod, img;
+    if (bytes.length === STOCK_V15_SIZE && sha === STOCK_V15_SHA256) {          /* M-VAVE's official V15, checked byte for byte */
+      const st = await validateStockPackage(bytes);
+      prod = st.product; img = st.image;
+    } else {
+      prod = productOf(bytes);
+      if (!/^FM-1_\d{3}$/.test(prod) || !hasLoader(bytes)) { say("notpkg"); $("fileinfo").textContent = ""; return; }
+      img = logicalImage(bytes);
+    }
+    image = img; product = prod;
+    $("fileinfo").textContent = `${f.name}: ${prod}, ${bytes.length} bytes, sha256 ${sha.slice(0, 16)}...`;
+    $("go").textContent = "Install " + f.name;
+    $("go").disabled = false;
+    say("");
+    log(`file ${f.name}: ${prod}, ${bytes.length} bytes, sha256 ${sha}`);
+  } catch (e) { say("loadfail", e.message); }
+});
 
 $("go").addEventListener("click", async () => {
   if (writing || !image) return;
@@ -117,12 +155,16 @@ $("go").addEventListener("click", async () => {
   let midi;
   try { midi = await navigator.requestMIDIAccess({ sysex: true }); }
   catch (e) { say("denied"); writing = false; $("go").disabled = false; return; }
+  const portList = (m) => [...m.values()].map((p) => `${p.name} (${p.state})`).join(", ") || "none";
+  log("MIDI inputs: " + portList(midi.inputs));
+  log("MIDI outputs: " + portList(midi.outputs));
+  $("log").parentElement.open = true;
   try {
     const up = new Updater(midi, log);
     const total = 74 + 1167;
     const step = (k, a) => {
       log(`${k} ${a ?? ""}`);
-      if (k === "start") say("start");
+      if (k === "start") say("start"); if (k === "start") log("running firmware: " + a);
       if (k === "verify") { say("verify"); $("bar").value = (a / total) * 100; }
       if (k === "loader") say("loader");
       if (k === "write") { say("write"); $("bar").value = ((74 + a) / total) * 100; }
@@ -132,9 +174,9 @@ $("go").addEventListener("click", async () => {
     const ota = await up.find((id) => /^ota-/i.test(id.model));
     if (ota) {
       ota.link.close();
-      say((await up.resume(image, step, meta.product)) ? "done" : "stopped");
+      say((await up.resume(image, step, product)) ? "done" : "stopped");
     } else {
-      await up.install(image, meta.product, step);
+      await up.install(image, product, step);
     }
   } catch (e) {
     if (e && e.code && MSG[e.code]) say(e.code, e.detail || "");
