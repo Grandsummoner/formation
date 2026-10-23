@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* A fake FM-1 on a computer: the app (firmware/src/navyarp2.c) runs unchanged on it. platform.c includes
+/* A fake FM-1 on a computer: the app (firmware/src/formation.c) runs unchanged on it. platform.c includes
  * this file instead of the hardware when DINGHY_HOST is set. A script presses keys over time; out come
  * the screen (PPM, at the times SHOT asks) and the sound (WAV, as the FM-1 sends it over USB).
  *
  *   mkdir -p build/host
- *   cc -O2 -Wall -DDINGHY_HOST -Ifirmware/src -Ifirmware/gen -o build/host/navyarp2 firmware/src/navyarp2.c
- *   build/host/navyarp2 build/host/navyarp2        (-> build/host/navyarp2.wav, build/host/navyarp2-<ms>.ppm)
- *   build/host/navyarp2 OUT script.txt [FPS]    (your own script; with FPS: OUT-NNNNN.ppm, a frame every 1/FPS s:
+ *   cc -O2 -Wall -DDINGHY_HOST -Ifirmware/src -Ifirmware/gen -o build/host/formation firmware/src/formation.c
+ *   build/host/formation build/host/formation        (-> build/host/formation.wav, build/host/formation-<ms>.ppm)
+ *   build/host/formation OUT script.txt [FPS]    (your own script; with FPS: OUT-NNNNN.ppm, a frame every 1/FPS s:
  *                                             a film of your firmware, e.g. ffmpeg -r 30 -i OUT-%05d.ppm ...)
  *
  * Change SCRIPT below to try your own app. */
@@ -16,7 +16,7 @@
 #include <string.h>
 
 #ifndef APP_NAME
-#define APP_NAME "NAVYARP2"
+#define APP_NAME "FORMATION"
 #endif
 #ifndef APP_VER
 #define APP_VER "0.0"
@@ -127,7 +127,7 @@ static void read_script(const char *path)
     script_n = n;
 }
 
-static const char *host_out = "build/host/navyarp2";
+static const char *host_out = "build/host/formation";
 static int16_t *wav;
 static uint32_t wav_n;
 

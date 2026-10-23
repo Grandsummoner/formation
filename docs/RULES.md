@@ -11,7 +11,7 @@ has habits. These are the ones that cost the SLOOP / sloopDX / zp12 people time;
   `__udivdi3`, which is not there: the link fails. Shift instead, or divide 32-bit values.
 - **A division by zero does not crash.** It gives a wrong value (the trap is off, as SLOOP has it, because the
   compiler may compute a division ahead of the test that guards it). Test your divisors.
-- Compute constants on your computer and write them into the source as numbers (see `INC_C9` in navyarp2.c).
+- Compute constants on your computer and write them into the source as numbers (see `INC_C9` in formation.c).
 
 ## The build checks
 
@@ -36,7 +36,7 @@ runs late the sound crackles; when it never ends the watchdog resets the FM-1.
   room.
 - No flash, no screen, no `platform_poll()`, no waiting in it.
 - Share with the main loop through `volatile` variables, one writer each. A 32-bit store is atomic; a struct
-  is not: write the parts in an order that is safe to see half-done (navyarp2.c sets the pitch before the gate).
+  is not: write the parts in an order that is safe to see half-done (formation.c sets the pitch before the gate).
 
 ## The main loop
 

@@ -1,4 +1,4 @@
-# NavyArp2 host test: a long run through the controls.  T keys MASK | btn ID | btnup ID | enc ID N | midi ST D1 D2 | shot | end
+# Formation host test: a long run through the controls.  T keys MASK | btn ID | btnup ID | enc ID N | midi ST D1 D2 | shot | end
 # buttons: 0 OCT- 1 OCT+ 2 FX 3 SEL 4 ENV 5 LFO 6 EDIT 7 GLO 8 HOME 9 SAVE 10 ARP 11 SEQ 12 PLAY 13 REC
 # encoders: 0 SELECT 1 ALGORITHM 2..5 KNOB1..4 6 PRESETS
 # white keys (lower row 1..16): 0x1 0x4 0x10 0x40 0x80 0x200 0x800 0x1000 ...   black keys (upper row 1..11): 0x2 0x8 0x20 0x100 0x400 0x2000 0x8000 0x20000 0x100000(A) 0x400000(B) 0x2000000(mute)

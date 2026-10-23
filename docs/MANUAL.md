@@ -1,6 +1,6 @@
-# NavyArp2 manual
+# Formation manual
 
-NavyArp2 is a probabilistic arpeggiator and step sequencer with two **scenes**, A and B, that you crossfade with
+Formation is a probabilistic arpeggiator and step sequencer with two **scenes**, A and B, that you crossfade with
 Knob 4. Each scene has eight step probabilities and its own voice; both send MIDI out over USB and play the FM-1's own
 sound. It is a port of the Navy Arp 2 plugin.
 

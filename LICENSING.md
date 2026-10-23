@@ -1,6 +1,6 @@
 # Licensing
 
-NavyArp2 is free software under the GNU General Public License, version 3 only (`GPL-3.0-only`, full text in
+Formation is free software under the GNU General Public License, version 3 only (`GPL-3.0-only`, full text in
 `LICENSE`). You may use, study, change and share it. If you give someone a firmware built from it, give them its
 complete source under the same licence too.
 
@@ -8,9 +8,9 @@ complete source under the same licence too.
 
 | | |
 | --- | --- |
-| The app `firmware/src/navyarp2.c`, the web installer page `web/index.html`, `tools/make_site.py`, the host tests, the docs | Copyright (C) 2026 Grand (Grandsummoner), a port of the plugin Navy Arp 2 (<https://github.com/Grandsummoner/navy-arp2>) |
+| The app `firmware/src/formation.c`, the web installer page `web/index.html`, `tools/make_site.py`, the host tests, the docs | Copyright (C) 2026 Grand (Grandsummoner), a port of the plugin Navy Arp 2 (<https://github.com/Grandsummoner/navy-arp2>) |
 | The platform: `firmware/hal/`, `firmware/loader/`, `crt0.S`, `app.ld`, `firmware/src/` (`usb.c`, `ota.c`, `recovery.c`, `lcd.c`, `gfx.c`, `libc.c`, `bootguard.h`, `uac_fir.h`), `tools/` (except `make_site.py`), `web/fm1pkg.js`, `web/fm1ota.js` | Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments ([Felucca](https://github.com/hugelton/Felucca)), with the changes of [SLOOP](https://github.com/isod89/sloop-fm1) (isod89) |
-| The platform wiring `firmware/src/platform.c`, the host mode `tests/host.c`, `docs/API.md`, `docs/RULES.md` | zvenson ([Dinghy](https://github.com/zvenson/dinghy)), changed here for NavyArp2 |
+| The platform wiring `firmware/src/platform.c`, the host mode `tests/host.c`, `docs/API.md`, `docs/RULES.md` | zvenson ([Dinghy](https://github.com/zvenson/dinghy)), changed here for Formation |
 
 ## Third-party material
 
@@ -22,4 +22,4 @@ complete source under the same licence too.
 ## Trademarks
 
 "Felucca" and "Hügelton Instruments" are names of Hügelton Instruments; "M-VAVE" and "FM-1" belong to their owners.
-NavyArp2 is not made or endorsed by them.
+Formation is not made or endorsed by them.
