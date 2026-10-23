@@ -54,6 +54,9 @@
   <p class="small" id="fileinfo"></p>
   <progress id="bar" max="100" value="0"></progress>
   <p id="status"></p>
+  <p id="portbox" class="small" hidden>The page could not recognise your FM-1 by name. These are the MIDI ports it can
+    see. Choose the one that is your FM-1 (unplug the FM-1: the port that disappears is it), then press Install again:
+    <select id="port"></select></p>
 
   <p class="small"><b>Going back</b> to the official firmware, or to another one: the
     <a href="https://thefirmwarehub.com" target="_blank" rel="noopener">FM-1 Firmware Hub</a>.<br>
@@ -89,7 +92,7 @@ const MSG = {
   done: "Done. Hold OCT- while switching on only if it does not start.", stopped: "Stopped. Replug the USB cable and press Install again.",
   error: "Error: ",
   denied: "MIDI (SysEx) access was not allowed. Allow MIDI in the site settings (address bar) and press Install again.",
-  notfound: "FM-1 not found. On the official V16 firmware: hold OCT- and OCT+ for 5 seconds (update mode), then press Install again. Otherwise check the USB cable (a data cable), close other apps and tabs that use MIDI (Workbench, DAW, other installers), and press Install again.",
+  notfound: "FM-1 not found. If your FM-1 appears under another name (the newest official firmware may call its port something else), choose it from the list below and press Install again. Otherwise: hold OCT- and OCT+ for 5 seconds (update mode), check the USB cable (a data cable), close other apps and tabs that use MIDI (Workbench, DAW, other installers), and press Install again.",
   model: "The connected device is not an FM-1.",
   lost: "The USB connection was lost. Replug it and press Install again.",
   noloader: "The FM-1 in update mode was not found. Replug the USB cable and press Install again (it stays in update mode until it is finished).",
@@ -155,12 +158,19 @@ $("go").addEventListener("click", async () => {
   let midi;
   try { midi = await navigator.requestMIDIAccess({ sysex: true }); }
   catch (e) { say("denied"); writing = false; $("go").disabled = false; return; }
+  const sel = $("port"), kept = sel.value;                       /* the ports Chrome sees: the user may choose the FM-1 */
+  const portNames = [...new Set([...midi.inputs.values()].map((p) => p.name))];
+  sel.textContent = "";
+  sel.add(new Option("Detect automatically", ""));
+  for (const n of portNames) sel.add(new Option(n, n));
+  sel.value = portNames.includes(kept) ? kept : "";
   const portList = (m) => [...m.values()].map((p) => `${p.name} (${p.state})`).join(", ") || "none";
   log("MIDI inputs: " + portList(midi.inputs));
   log("MIDI outputs: " + portList(midi.outputs));
   $("log").parentElement.open = true;
   try {
     const up = new Updater(midi, log);
+    up.only = sel.value || null;
     const total = 74 + 1167;
     const step = (k, a) => {
       log(`${k} ${a ?? ""}`);
@@ -179,6 +189,7 @@ $("go").addEventListener("click", async () => {
       await up.install(image, product, step);
     }
   } catch (e) {
+    if (e && e.code === "notfound") $("portbox").hidden = false;
     if (e && e.code && MSG[e.code]) say(e.code, e.detail || "");
     else say("error", e && e.message);
     log(String(e && e.stack || e));

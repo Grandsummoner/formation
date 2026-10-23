@@ -112,6 +112,7 @@ export class Updater {
   constructor(access, log) {
     this.access = access;
     this.log = log || (() => {});
+    this.only = null;                 // a port name the user chose (a firmware may name its port as it likes)
   }
 
   // every in/out pair with the same port name that answers the handshake
@@ -119,7 +120,8 @@ export class Updater {
     const outs = [...this.access.outputs.values()];
     for (const input of this.access.inputs.values()) {
       if (input.state === "disconnected") continue;
-      if (!/fm-1|felucca|ota|composite|sinco|usb-midi/i.test(input.name || "")) continue;   // never probe other gear
+      const known = /fm-1|felucca|ota|composite|sinco|usb-midi/i.test(input.name || "");
+      if (!known && !(this.only && input.name === this.only)) continue;   // never probe other gear, unless the user chose this port
       const output = outs.find((o) => o.name === input.name && o.state !== "disconnected");
       if (!output) continue;
       try { await input.open(); await output.open(); } catch (_) { continue; }
