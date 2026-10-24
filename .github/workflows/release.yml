@@ -1,22 +1,26 @@
-# Build Formation on GitHub, attach the .fwsc to a release and publish the web installer (GitHub Pages).
-#   - push a tag `v1.0` (X.Y, one digit each), or
-#   - run it by hand: Actions > release > Run workflow (give a version).
-# One-time setup: Settings > Pages > Source: "GitHub Actions".
+# Formation: every push to main builds the firmware, the web installer and the browser emulator, and publishes them.
+#   - the installer, the emulator and the manual go to GitHub Pages (https://<you>.github.io/<repo>/)
+#   - the .fwsc is attached to a release called "latest" (always the newest build):
+#       https://github.com/<you>/<repo>/releases/download/latest/formation-<version>.fwsc
+#   - the version is the first line of the file VERSION (X.Y, one digit each); push a tag like v1.1 to make a numbered release
+#   - a build that fails publishes nothing: the site and the release stay as they were
+# One-time setup: Settings > Pages > Source: "GitHub Actions". You can also run it by hand: Actions > release > Run workflow.
 name: release
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
-        description: "Version X.Y (one digit each, e.g. 1.0)"
-        default: "1.0"
+        description: "Version X.Y (empty: the VERSION file)"
+        default: ""
 permissions:
   contents: write
   pages: write
   id-token: write
 concurrency:
-  group: release
+  group: release-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   build:
@@ -33,7 +37,9 @@ jobs:
         id: v
         run: |
           V="${{ github.event.inputs.version }}"
-          if [ -z "$V" ]; then V="${GITHUB_REF_NAME#v}"; fi
+          case "$GITHUB_REF" in refs/tags/v*) [ -n "$V" ] || V="${GITHUB_REF_NAME#v}";; esac
+          [ -n "$V" ] || V="$(tr -d ' \r\n' < VERSION)"
+          echo "$V" | grep -Eq '^[0-9]\.[0-9]$' || { echo "::error::the version must look like 1.0 (one digit each), not '$V'"; exit 1; }
           echo "version=$V" >> "$GITHUB_OUTPUT"
       - name: Host-mode test (the arp and the screens run on this computer)
         run: sh tests/run_host.sh tests/full.txt > host.log && tail -3 host.log
@@ -49,18 +55,32 @@ jobs:
         run: git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK
       - name: Build
         run: sh build.sh --release "${{ steps.v.outputs.version }}"
-      - name: Site (web installer, manual, the package)
+      - name: Site (web installer, emulator, manual, the package)
         run: python3 tools/make_site.py "build/formation-${{ steps.v.outputs.version }}.fwsc" "${{ steps.v.outputs.version }}" site "https://github.com/${{ github.repository }}"
       - uses: actions/upload-artifact@v4
         with:
           name: formation-${{ steps.v.outputs.version }}
           path: build/formation-${{ steps.v.outputs.version }}.fwsc
-      - name: Attach to the release
+      - name: Numbered release (a tag like v1.1)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: build/formation-${{ steps.v.outputs.version }}.fwsc
           generate_release_notes: true
+      - name: Move the "latest" tag to this commit
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git tag -f latest
+          git push -f origin latest
+      - name: Update the "latest" release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Formation, latest build (${{ steps.v.outputs.version }})
+          prerelease: true
+          body: "The newest build of main, made automatically on every push. Commit ${{ github.sha }}."
+          files: build/formation-${{ steps.v.outputs.version }}.fwsc
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
