@@ -8,7 +8,7 @@ complete source under the same licence too.
 
 | | |
 | --- | --- |
-| The app `firmware/src/formation.c`, the web installer page `web/index.html`, `tools/make_site.py`, the host tests, the docs | Copyright (C) 2026 Grand (Grandsummoner), a port of the plugin Navy Arp 2 (<https://github.com/Grandsummoner/navy-arp2>) |
+| The app `firmware/src/formation.c`, the web installer page `web/index.html`, the emulator page `web/emulator.html`, `tools/make_site.py`, `tools/build_emu.py`, the host and browser modes (`tests/web.c`, `tests/emu_test.mjs`) and tests, the docs | Copyright (C) 2026 Grand (Grandsummoner), a port of the plugin Navy Arp 2 (<https://github.com/Grandsummoner/navy-arp2>) |
 | The platform: `firmware/hal/`, `firmware/loader/`, `crt0.S`, `app.ld`, `firmware/src/` (`usb.c`, `ota.c`, `recovery.c`, `lcd.c`, `gfx.c`, `libc.c`, `bootguard.h`, `uac_fir.h`), `tools/` (except `make_site.py`), `web/fm1pkg.js`, `web/fm1ota.js` | Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments ([Felucca](https://github.com/hugelton/Felucca)), with the changes of [SLOOP](https://github.com/isod89/sloop-fm1) (isod89) |
 | The platform wiring `firmware/src/platform.c`, the host mode `tests/host.c`, `docs/API.md`, `docs/RULES.md` | zvenson ([Dinghy](https://github.com/zvenson/dinghy)), changed here for Formation |
 

@@ -23,7 +23,9 @@ enum { BTN_OCT_DOWN = 0, BTN_OCT_UP = 1, BTN_FX = 2, BTN_SEL = 3, BTN_ENV = 4, B
 enum { ENC_SELECT = 0, ENC_ALGORITHM = 1, ENC_KNOB1 = 2, ENC_KNOB2 = 3, ENC_KNOB3 = 4, ENC_KNOB4 = 5, ENC_PRESETS = 6 };
 #define KEY_LED(k) (14u + (k))
 
-#ifdef DINGHY_HOST
+#ifdef DINGHY_WEB
+#include "../../tests/web.c"                   /* in a browser: a fake FM-1 as WebAssembly (tests/web.c, web/emulator.html) */
+#elif defined(DINGHY_HOST)
 #include "../../tests/host.c"                  /* on a computer: a fake FM-1 (tests/host.c) */
 #else
 #include <stdint.h>

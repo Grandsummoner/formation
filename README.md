@@ -22,6 +22,14 @@ updater, or go back to the official firmware through the [FM-1 Firmware Hub](htt
 If the build step fails, open the failed run's log and send it to whoever helps you: the host test runs first and tells
 you whether the problem is in the code or in the toolchain.
 
+## Try it in a browser (emulator)
+
+`emulator.html` on your Pages site runs the firmware's own code, compiled to WebAssembly, with a faceplate: click the
+keys and buttons, turn the knobs with the mouse wheel, switch the sound on, watch the MIDI it sends (and send it to a
+real MIDI port). Your presets are kept in the browser. The release workflow builds it with
+`python3 tools/build_emu.py` (needs `pip install ziglang`) and tests it with `node tests/emu_test.mjs`; the page is
+`tools/make_site.py` putting `build/emu.wasm` into `web/emulator.html`.
+
 ## Build and try it on your own computer
 
 * **No hardware:** `sh tests/run_host.sh tests/full.txt` runs the firmware on this computer (needs a C compiler and Pillow):
@@ -37,8 +45,8 @@ you whether the problem is in the code or in the toolchain.
 | --- | --- |
 | `firmware/src/formation.c` | the app: engine, voices, controls, screen |
 | `firmware/src/platform.c` and the rest of `firmware/` | the platform (Dinghy, Felucca, SLOOP): USB, updates, screen, flash |
-| `web/`, `tools/make_site.py` | the web installer |
-| `tests/` | the host mode and its scripts |
+| `web/`, `tools/make_site.py`, `tools/build_emu.py` | the web installer and the browser emulator |
+| `tests/` | the host mode (`host.c`, scripts) and the browser mode (`web.c`, `emu_test.mjs`) |
 
 Formation is built on [Dinghy](https://github.com/zvenson/dinghy), the platform of
 [Felucca](https://github.com/hugelton/Felucca) and [SLOOP](https://github.com/isod89/sloop-fm1); see

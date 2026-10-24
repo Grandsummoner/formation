@@ -5,6 +5,8 @@
 
   index.html                 the web installer: web/index.html with web/fm1pkg.js, web/fm1ota.js and the package's
                              metadata inlined (one file, no build step in the browser)
+  emulator.html              the firmware in a browser: web/emulator.html with build/emu.wasm (tools/build_emu.py) inlined;
+                             skipped when there is no build/emu.wasm
   manual.html                docs/MANUAL.md as a page
   firmware/formation-VER.fwsc the package, with LICENSE, LICENSING.md and LICENSES/ beside it (the package holds three
                              JieLi AC79 SDK files, Apache-2.0)
@@ -13,6 +15,7 @@
 
 Only a package made by this tree's build is accepted: a release identity (FM-1_96N) and Felucca's update loader.
 """
+import base64
 import html
 import json
 import re
@@ -65,6 +68,20 @@ def main(pkg, version, out="site", source=""):
         if page.count(mark) != 1:
             raise SystemExit(f"web/index.html must contain {mark} once; update make_site.py")
     page = page.replace("/*LIB*/", lib).replace("/*META*/", meta)
+    emu_wasm = ROOT / "build" / "emu.wasm"
+    emu_link = ""
+    if emu_wasm.exists():
+        emu = (WEB / "emulator.html").read_text(encoding="utf-8")
+        for mark in ('"/*WASM*/"', '"/*VER*/"'):
+            if emu.count(mark) != 1:
+                raise SystemExit(f"web/emulator.html must contain {mark} once; update make_site.py")
+        emu = emu.replace('"/*WASM*/"', '"' + base64.b64encode(emu_wasm.read_bytes()).decode() + '"')
+        emu = emu.replace('"/*VER*/"', json.dumps(version))
+        (out / "emulator.html").parent.mkdir(parents=True, exist_ok=True)
+        (out / "emulator.html").write_text(emu, encoding="utf-8")
+        emu_link = 'Not sure yet? <a href="emulator.html">Try Formation in your browser first</a>: the firmware itself, running in the page.'
+        print(f"emulator: {out}/emulator.html ({len(emu)} B)")
+    page = page.replace("<!--EMU-->", emu_link)
     fw = out / "firmware"
     fw.mkdir(parents=True, exist_ok=True)
     for old in fw.glob("formation-*.fwsc"):               # one package: the current one

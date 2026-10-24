@@ -1,105 +1,134 @@
 # Formation host test: a long run through the controls.  T keys MASK | btn ID | btnup ID | enc ID N | midi ST D1 D2 | shot | end
 # buttons: 0 OCT- 1 OCT+ 2 FX 3 SEL 4 ENV 5 LFO 6 EDIT 7 GLO 8 HOME 9 SAVE 10 ARP 11 SEQ 12 PLAY 13 REC
-# encoders: 0 SELECT 1 ALGORITHM 2..5 KNOB1..4 6 PRESETS
+# encoders: 0 SELECT 1 ALGORITHM (A-B crossfade) 2..5 KNOB1..4 6 PRESETS
 # white keys (lower row 1..16): 0x1 0x4 0x10 0x40 0x80 0x200 0x800 0x1000 ...   black keys (upper row 1..11): 0x2 0x8 0x20 0x100 0x400 0x2000 0x8000 0x20000 0x100000(A) 0x400000(B) 0x2000000(mute)
-# POLY on (SEL); RANDOM page 2 (ALGORITHM): harmony and chaos up
+# POLY on (SEL)
 1300 btn 3
 1320 btnup 3
-1400 enc 1 1
-1500 enc 3 30
-1600 enc 4 12
-1800 shot
-# dice MELO on the RANDOM page (upper key 1), then back
-1900 keys 0x2
-1950 keys 0x0
-# hold a chord F3 A3 C4, PLAY
-2000 keys 0x91
-2100 btn 12
-2120 btnup 12
+# HOME: GENERATE half (top lit): knobs 1-4 = entropy, harmony, chaos, morph
+1400 btn 8
+1420 btnup 8
+1500 enc 2 -20
+1520 enc 3 40
+1540 enc 4 20
+1600 shot
+2400 shot
+# HOME again: RHYTHM half (bottom lit): rest, density, swing, legato
+2500 btn 8
+2520 btnup 8
+2600 enc 3 15
 3000 shot
-# crossfade towards B
-3100 enc 5 40
+# HOME again: back to the performance screen. A chord F3 A3 C4, PLAY
+3100 btn 8
+3120 btnup 8
+3200 keys 0x91
+3300 btn 12
+3320 btnup 12
 4000 shot
-# the step level of step 2 (hold upper key 2 and turn Knob 1)
-4100 keys 0x99
-4200 enc 2 -20
-4400 keys 0x91
-4500 shot
-# LFO page 1: row MORPH, speed and depth
-4600 btn 5
-4620 btnup 5
-4700 enc 3 2
-4800 enc 4 15
-5000 shot
-# FX page, timbre of A
-5100 btn 2
-5120 btnup 2
-5200 enc 2 20
-5400 shot
-# GLO page: BPM
-5500 btn 7
-5520 btnup 7
-5600 enc 2 40
-5800 shot
-5900 btn 8
-5920 btnup 8
-# edit scene B, other instrument
-6000 keys 0x400091
-6050 keys 0x91
-6100 enc 6 1
-6150 enc 6 1
-6400 shot
+# crossfade A to B on the ALGORITHM knob: the overlay, then back
+4100 enc 1 25
+4200 shot
+5200 shot
+# FX: voice A (instrument, timbre), then voice B, then out
+5300 btn 2
+5320 btnup 2
+5400 enc 2 1
+5420 enc 3 -10
+5500 shot
+6300 shot
+6400 btn 2
+6420 btnup 2
+6500 shot
+6600 btn 2
+6620 btnup 2
+# LFO: page 1 top (morph, rest speed and depth), bottom, page 2 top, then out
+6800 btn 5
+6820 btnup 5
+6900 enc 2 2
+7000 enc 3 15
+7100 enc 4 3
+7800 shot
+7900 btn 5
+7920 btnup 5
+8000 btn 5
+8020 btnup 5
+8100 shot
+8200 btn 5
+8220 btnup 5
+# GLO: tempo and key, then scale and midi, then out
+8400 btn 7
+8420 btnup 7
+8500 enc 2 30
+9200 shot
+9300 btn 7
+9320 btnup 7
+9400 enc 3 1
+9500 enc 4 1
+10200 shot
+10300 btn 7
+10320 btnup 7
+# EDIT: tap = randomise, long press = auto re-roll each measure
+10500 btn 6
+10520 btnup 6
+10600 shot
+11500 btn 6
+12200 btnup 6
+12300 shot
+13500 shot
+# edit scene B, other instrument on the PRESETS knob
+13600 keys 0x400091
+13650 keys 0x91
+13700 enc 6 1
+13750 enc 6 1
+13800 shot
 # mute: hold the mute key, tap step 3
-6500 keys 0x2000091
-6550 keys 0x2000191
-6600 keys 0x2000091
-6650 keys 0x91
-6800 shot
+14800 keys 0x2000091
+14850 keys 0x2000191
+14900 keys 0x2000091
+14950 keys 0x91
 # Freeze on and off
-7000 btn 13
-7020 btnup 13
-7600 shot
-7700 btn 13
-7720 btnup 13
+15100 btn 13
+15120 btnup 13
+15800 shot
+15900 btn 13
+15920 btnup 13
 # Latch (long press ARP), then let go of the keys: it keeps playing
-8000 btn 10
-8700 btnup 10
-8800 keys 0x0
-9800 shot
+16000 btn 10
+16700 btnup 10
+16800 keys 0x0
+17800 shot
 # SEQ: hold step key 1, tap a note
-10000 btn 11
-10020 btnup 11
-10100 keys 0x2
-10200 keys 0x82
-10300 keys 0x2
-10400 keys 0x0
-11000 shot
+18000 btn 11
+18020 btnup 11
+18100 keys 0x2
+18200 keys 0x82
+18300 keys 0x2
+18400 keys 0x0
+19000 shot
 # save to slot 4 (short press, then white key 4)
-11100 btn 9
-11150 btnup 9
-11200 keys 0x40
-11300 keys 0x0
-11600 shot
-# recall mode (long press), pick slot 4
-11800 btn 9
-12500 btnup 9
-12600 keys 0x40
-12700 keys 0x0
-12900 shot
-13000 btn 9
-13700 btnup 9
-# SCALE, SYSTEM, COPY pages
-13800 enc 0 1
-13900 enc 2 3
-14000 enc 3 4
-14300 shot
-15000 enc 0 1
-15100 enc 0 1
-15200 enc 2 1
-15500 shot
-16000 enc 0 -1
-16100 enc 2 1
-16400 shot
-17500 enc 6 1
-17700 shot
-20000 end
+19100 btn 9
+19150 btnup 9
+19200 keys 0x40
+19300 keys 0x0
+19600 shot
+# recall mode (long press), pick slot 4, leave
+19800 btn 9
+20500 btnup 9
+20600 keys 0x40
+20700 keys 0x0
+20900 shot
+21000 btn 9
+21700 btnup 9
+# menus: SCALE, SYSTEM, COPY
+21800 enc 0 1
+21900 enc 2 3
+22000 enc 3 4
+22300 shot
+23000 enc 0 1
+23100 enc 0 1
+23200 enc 2 1
+23500 shot
+24000 enc 0 -1
+24100 enc 2 1
+24400 shot
+26000 end

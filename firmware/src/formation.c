@@ -259,6 +259,8 @@ static void offs_run(uint32_t now, int force)
 
 /* ================================================================== 4. the engine */
 static void recall_apply(int32_t slot);
+static void roll(void);
+static uint8_t auto_roll;
 static uint8_t running, frozen, latch, first_of_chord = 1, fwd = 1, cstep = 7;
 static uint8_t held[12], held_n, latchn[12], latch_len, frz_pool[12], frz_n;
 static uint8_t frz_p[8], frz_e[6];              /* what Freeze locks: the step levels and the six parameters */
@@ -327,6 +329,7 @@ static void do_step(void)
     else if (e < -13 && e >= -64) ls = (ls + 7u) & 7u;
     else ls = rnd8() < 51u ? (ls + 2u) & 7u : (ls + 1u) & 7u;
     cstep = (uint8_t)ls;
+    if (ls == 0u && auto_roll && !frozen) roll();                                   /* auto re-roll: each measure */
     if (ls == 0u && pend_slot >= 0) {                                               /* a recall waits for the end of the measure */
         recall_apply(pend_slot);
         pend_slot = -1;
@@ -512,16 +515,23 @@ static char *p_note(char *p, uint32_t n)
     return p_num(p, n / 12u - 1u);
 }
 
-/* a transient message on the HUD (a value just touched) */
+/* a message that takes over the screen while a value is touched: its name, the value big, a bar */
 static char hud_name[16], hud_val[16];
-static uint32_t hud_until;
+static uint32_t hud_until, ov_btn;
 static int32_t hud_bar = -1;
+static uint8_t hud_scn;                         /* 0 none, 1 scene A, 2 scene B: shown above the name */
 static void hud(const char *name, const char *val, int32_t bar)
 {
     char *p = p_str(hud_name, name); *p = 0;
     p = p_str(hud_val, val); *p = 0;
     hud_bar = bar;
-    hud_until = fm1_ms + 1400u;
+    hud_scn = 0;
+    hud_until = fm1_ms + 800u;
+}
+static void hud_btn(const char *name, const char *val, uint32_t bit)    /* stays while that button is held */
+{
+    hud(name, val, -1);
+    ov_btn = 1u << bit;
 }
 static void hud_pct(const char *name, uint32_t v255)
 {
@@ -635,6 +645,7 @@ static void draw_head(void)
     if (latch) p = p_str(p, " LATCH");
     if (cur.poly) p = p_str(p, " POLY");
     if (frozen) p = p_str(p, " FRZ");
+    if (auto_roll) p = p_str(p, " RND");
     *p = 0;
     draw_text_box(8, 2, 224, &FONT_S, s, frozen ? C_B : pal[4], 0);
 }
@@ -644,30 +655,21 @@ static void draw_globe_hud(void)
     char s[24], *p = s;
     cv_begin(240, 64, C_BLACK);
     draw_globe(34, 32);
-    if (fm1_ms < hud_until) {
-        cv_text(80, 2, &FONT_S, hud_name, pal[2]);
-        cv_text(80, 20, &FONT_L, hud_val, pal[4]);
-        if (hud_bar >= 0) {                     /* 45 thin segments */
-            uint32_t i, lit = (uint32_t)hud_bar * 45u / 255u;
-            for (i = 0; i < 45u; i++) cv_rect(80 + (int32_t)i * 3, 56, 2, 6, i < lit ? pal[4] : pal[0]);
-        }
-    } else {
-        p = p_str(p, ROOT_NAME[cur.root % 12u]);
-        p = p_str(p, " ");
-        p = p_str(p, SCALE_NAME[cur.scale % 10u]);
-        *p = 0;
-        cv_text(80, 4, &FONT_S, s, pal[3]);
-        p = s;
-        p = p_str(p, "A ");
-        p = p_str(p, INST_NAME[cur.sc[0].inst % 5u]);
-        *p = 0;
-        cv_text(80, 24, &FONT_S, s, C_A);
-        p = s;
-        p = p_str(p, "B ");
-        p = p_str(p, INST_NAME[cur.sc[1].inst % 5u]);
-        *p = 0;
-        cv_text(80, 44, &FONT_S, s, C_B);
-    }
+    p = p_str(p, ROOT_NAME[cur.root % 12u]);
+    p = p_str(p, " ");
+    p = p_str(p, SCALE_NAME[cur.scale % 10u]);
+    *p = 0;
+    cv_text(80, 4, &FONT_S, s, pal[3]);
+    p = s;
+    p = p_str(p, "A ");
+    p = p_str(p, INST_NAME[cur.sc[0].inst % 5u]);
+    *p = 0;
+    cv_text(80, 24, &FONT_S, s, C_A);
+    p = s;
+    p = p_str(p, "B ");
+    p = p_str(p, INST_NAME[cur.sc[1].inst % 5u]);
+    *p = 0;
+    cv_text(80, 44, &FONT_S, s, C_B);
     cv_blit(0, 26);
 }
 
@@ -707,13 +709,177 @@ static void draw_foot(void)
     draw_text_box(8, 222, 224, &FONT_S, s, pal[2], 0);
 }
 
-/* ---- the other screens: a title and up to four rows (label, value, bar) */
-enum { V_PERF, V_SCALE, V_COPY, V_SYS, V_LFO, V_FX, V_GLO, V_RAND, V_INST, V_SLOTS };
+/* ---- double-size text for the overlay: the large font, every pixel a 2x2 block */
+static int32_t cv_text2(int32_t x, int32_t y, const felucca_font_t *f, const char *s, uint16_t c)
+{
+    uint16_t ramp[16];
+    uint32_t r = c >> 11, g = (c >> 5) & 63u, b = c & 31u, a;
+    for (a = 0; a < 16u; a++)
+        ramp[a] = (uint16_t)(((r * a / 15u) << 11) | ((g * a / 15u) << 5) | (b * a / 15u));
+    for (; *s; s++) {
+        uint32_t gi = glyph(f, (uint8_t)*s), gx, gy, w = f->bw[gi], bpr = (w + 1u) / 2u;
+        const uint8_t *gd = f->data + f->off[gi];
+        for (gy = 0; gy < f->h; gy++)
+            for (gx = 0; gx < w; gx++) {
+                uint32_t v = gd[gy * bpr + gx / 2u];
+                v = (gx & 1u) ? (v & 15u) : (v >> 4);
+                if (v) {
+                    int32_t px = x - 2 * (int32_t)f->pad + 2 * (int32_t)gx, py = y + 2 * (int32_t)gy;
+                    cv_pset(px, py, ramp[v]); cv_pset(px + 1, py, ramp[v]);
+                    cv_pset(px, py + 1, ramp[v]); cv_pset(px + 1, py + 1, ramp[v]);
+                }
+            }
+        x += 2 * (int32_t)f->adv[gi];
+    }
+    return x;
+}
+
+/* ---- the cells: what one knob controls on a page, how it reads, how it turns */
+enum { K_NONE, K_DENS, K_SWING, K_P, K_AB, K_INST, K_TIMB, K_DLY, K_LVL, K_LSPD, K_LDEP, K_BPM, K_STEP, K_TRANS,
+       K_THEME, K_ROOT, K_SCALE, K_CHA, K_CHB };
+typedef struct { uint8_t kind, arg; } cell_t;
+
+static const char *const PSHORT[6] = {"MORPH", "REST", "LEGATO", "ENTROP", "HARMNY", "CHAOS"};
+static const char *const LSHORT[6] = {"MOR", "RES", "LEG", "ENT", "HAR", "CHA"};
+static const char *const INST_SHORT[5] = {"MIDI", "ANALOG", "FM", "SUPSAW", "PULSE"};
+static const char *const SCALE_SHORT[10] = {"MAJOR", "MINOR", "PENTMN", "PENTMJ", "DORIAN", "PHRYG", "LYDIAN",
+                                            "MIXOLY", "HARMMN", "MELMN"};
+static const char *const THEME_SHORT[3] = {"NAVY", "MONO", "MATRIX"};
+
+static void cpy(char *d, const char *s) { *p_str(d, s) = 0; }
+static char *p_p100(char *p, uint32_t v255) { return p_num(p, (v255 * 100u + 127u) / 255u); }
+
+static void cell_text(cell_t c, char *name, char *val, int32_t *bar, uint32_t *scn)   /* name[12], val[16] */
+{
+    scene_t *s = &cur.sc[edit_sc], *v = &cur.sc[c.arg & 1u];
+    uint32_t a6 = c.arg % 6u;
+    char *p;
+    *bar = -1; *scn = 0; name[0] = 0; val[0] = 0;
+    switch (c.kind) {
+    case K_DENS: cpy(name, "DENS"); *p_p100(val, cur.density) = 0; *bar = cur.density; break;
+    case K_SWING: cpy(name, "SWING"); *p_p100(val, cur.swing) = 0; *bar = cur.swing; break;
+    case K_P:
+        cpy(name, PSHORT[a6]);
+        *scn = (uint32_t)edit_sc + 1u;
+        if (a6 == 3u) *p_sig(val, ((int32_t)s->p[3] - 127) * 100 / 127) = 0;
+        else *p_p100(val, s->p[a6]) = 0;
+        *bar = s->p[a6];
+        break;
+    case K_AB: cpy(name, "A-B"); *p_p100(val, cur.morph_pos) = 0; *bar = cur.morph_pos; break;
+    case K_INST: cpy(name, "INST"); cpy(val, INST_SHORT[v->inst % 5u]); *scn = (c.arg & 1u) + 1u; break;
+    case K_TIMB: cpy(name, "TIMBRE"); *p_p100(val, v->timbre) = 0; *bar = v->timbre; *scn = (c.arg & 1u) + 1u; break;
+    case K_DLY: cpy(name, "DELAY"); *p_p100(val, v->dsend) = 0; *bar = v->dsend; *scn = (c.arg & 1u) + 1u; break;
+    case K_LVL: cpy(name, "LEVEL"); *p_p100(val, v->level) = 0; *bar = v->level; *scn = (c.arg & 1u) + 1u; break;
+    case K_LSPD:
+        p = p_str(name, LSHORT[a6]); cpy(p, " SP");
+        cpy(val, LFO_RATE[cur.lfo_rate[a6] % 5u]);
+        *bar = (int32_t)cur.lfo_rate[a6] * 255 / 4;
+        break;
+    case K_LDEP:
+        p = p_str(name, LSHORT[a6]); cpy(p, " DP");
+        *p_p100(val, cur.lfo_depth[a6]) = 0;
+        *bar = cur.lfo_depth[a6];
+        break;
+    case K_BPM: cpy(name, "BPM"); *p_num(val, cur.bpm) = 0; break;
+    case K_STEP: cpy(name, "STEP"); cpy(val, DIV_NAME[cur.div & 3u]); break;
+    case K_TRANS: cpy(name, "TRANSP"); *p_sig(val, cur.tr) = 0; break;
+    case K_THEME: cpy(name, "THEME"); cpy(val, THEME_SHORT[glob.theme % 3u]); break;
+    case K_ROOT: cpy(name, "ROOT"); cpy(val, ROOT_NAME[cur.root % 12u]); break;
+    case K_SCALE: cpy(name, "SCALE"); cpy(val, SCALE_SHORT[cur.scale % 10u]); break;
+    case K_CHA: cpy(name, "CH A"); *p_num(val, (uint32_t)glob.ch[0] + 1u) = 0; break;
+    case K_CHB: cpy(name, "CH B"); *p_num(val, (uint32_t)glob.ch[1] + 1u) = 0; break;
+    default: break;
+    }
+}
+
+static void adj(uint8_t *v, int32_t d, int32_t step) { *v = (uint8_t)clampi((int32_t)*v + d * step, 0, 255); }
+
+static void cell_adj(cell_t c, int32_t d)       /* d: signed clicks, larger when the knob is turned fast */
+{
+    scene_t *s = &cur.sc[edit_sc], *v = &cur.sc[c.arg & 1u];
+    int32_t sg = d > 0 ? 1 : -1;
+    switch (c.kind) {
+    case K_DENS: adj(&cur.density, d, 3); break;
+    case K_SWING: adj(&cur.swing, d, 3); break;
+    case K_P: adj(&s->p[c.arg % 6u], d, 3); break;
+    case K_AB: adj(&cur.morph_pos, d, 3); break;
+    case K_INST: v->inst = (uint8_t)clampi((int32_t)v->inst + sg, 0, 4); break;
+    case K_TIMB: adj(&v->timbre, d, 3); break;
+    case K_DLY: adj(&v->dsend, d, 3); break;
+    case K_LVL: adj(&v->level, d, 3); break;
+    case K_LSPD: cur.lfo_rate[c.arg % 6u] = (uint8_t)clampi((int32_t)cur.lfo_rate[c.arg % 6u] + sg, 0, 4); break;
+    case K_LDEP: adj(&cur.lfo_depth[c.arg % 6u], d, 3); break;
+    case K_BPM: cur.bpm = (uint8_t)clampi((int32_t)cur.bpm + d, 40, 240); break;
+    case K_STEP: cur.div = (uint8_t)clampi((int32_t)cur.div + sg, 0, 3); break;
+    case K_TRANS: cur.tr = (int8_t)clampi((int32_t)cur.tr + sg, -12, 12); break;
+    case K_THEME: theme_set((uint32_t)((int32_t)glob.theme + 3 + sg) % 3u); break;
+    case K_ROOT: cur.root = (uint8_t)clampi((int32_t)cur.root + sg, 0, 11); break;
+    case K_SCALE: cur.scale = (uint8_t)clampi((int32_t)cur.scale + sg, 0, 9); break;
+    case K_CHA: glob.ch[0] = (uint8_t)clampi((int32_t)glob.ch[0] + sg, 0, 15); break;
+    case K_CHB: glob.ch[1] = (uint8_t)clampi((int32_t)glob.ch[1] + sg, 0, 15); break;
+    default: break;
+    }
+}
+
+static void cell_overlay(cell_t c)              /* the touched value takes over the screen */
+{
+    char n[12], v[16];
+    int32_t bar;
+    uint32_t scn;
+    cell_text(c, n, v, &bar, &scn);
+    hud(n, v, bar);
+    hud_scn = (uint8_t)scn;
+}
+
+static uint32_t kn_t[8];
+static int32_t kn_run[8];
+static int32_t knob_delta(uint32_t id, int32_t e)   /* a fast turn takes bigger steps, a slow one stays fine */
+{
+    int32_t n = e < 0 ? -e : e, mult;
+    uint32_t dt = fm1_ms - kn_t[id & 7u];
+    kn_t[id & 7u] = fm1_ms;
+    kn_run[id & 7u] = dt < 70u ? kn_run[id & 7u] + n : n;
+    mult = kn_run[id & 7u] < 4 ? 1 : kn_run[id & 7u] < 10 ? 2 : kn_run[id & 7u] < 20 ? 4 : 8;
+    return (e < 0 ? -n : n) * mult;
+}
+
+/* ---- pages: two halves of four cells; the knobs 1-4 turn the cells of the lit half; the buttons step through */
+enum { G_HOME, G_FX, G_LFO, G_GLO };
+static const char *const GROUP_NAME[4] = {"HOME", "FX", "LFO", "GLO"};
+typedef struct { uint8_t group, pos; const char *tab; cell_t c[4]; } half_t;
+static const half_t HALF[] = {
+    {G_HOME, 0, "GENERATE", {{K_P, 3}, {K_P, 4}, {K_P, 5}, {K_P, 0}}},
+    {G_HOME, 1, "RHYTHM", {{K_P, 1}, {K_DENS, 0}, {K_SWING, 0}, {K_P, 2}}},
+    {G_FX, 0, "VOICE A", {{K_INST, 0}, {K_TIMB, 0}, {K_DLY, 0}, {K_LVL, 0}}},
+    {G_FX, 1, "VOICE B", {{K_INST, 1}, {K_TIMB, 1}, {K_DLY, 1}, {K_LVL, 1}}},
+    {G_LFO, 0, "MORPH REST", {{K_LSPD, 0}, {K_LDEP, 0}, {K_LSPD, 1}, {K_LDEP, 1}}},
+    {G_LFO, 1, "LEGATO ENTROPY", {{K_LSPD, 2}, {K_LDEP, 2}, {K_LSPD, 3}, {K_LDEP, 3}}},
+    {G_LFO, 0, "HARMONY CHAOS", {{K_LSPD, 4}, {K_LDEP, 4}, {K_LSPD, 5}, {K_LDEP, 5}}},
+    {G_GLO, 0, "TEMPO KEY", {{K_BPM, 0}, {K_STEP, 0}, {K_TRANS, 0}, {K_THEME, 0}}},
+    {G_GLO, 1, "SCALE MIDI", {{K_ROOT, 0}, {K_SCALE, 0}, {K_CHA, 0}, {K_CHB, 0}}},
+};
+#define NHALF ((int32_t)(sizeof HALF / sizeof HALF[0]))
+static int32_t cur_half = -1;                   /* -1: the performance screen */
+
+static void goto_group(uint32_t g)              /* its button: into the group, then half by half, then out */
+{
+    int32_t h = cur_half, i;
+    if (h >= 0 && HALF[h].group == g) {
+        h++;
+        if (h >= NHALF || HALF[h].group != g) h = -1;
+    } else {
+        h = -1;
+        for (i = 0; i < NHALF; i++)
+            if (HALF[i].group == g) { h = i; break; }
+    }
+    cur_half = h;
+}
+
+/* ---- the other screens: the menus (SELECT knob) with rows of label, value, bar */
+enum { V_PERF, V_SCALE, V_COPY, V_SYS, V_PAGE, V_SLOTS, V_OVL };
 static uint8_t view, view_drawn = 255;
-static uint32_t dsp_pct;
-static uint8_t menu_pg, rand_pg, lfo_pg, fx_on, glo_on, sel_row, copy_act, save_mode, recall_mode;
-static uint8_t tr_view;                         /* 0 none, else the transient view and its timer */
-static uint32_t tr_t0;
+static uint8_t menu_pg, copy_act, save_mode, recall_mode, tr_view;
+static uint32_t tr_t0, dsp_pct;
 static char rows_cache[5][28];
 static const char *const COPY_NAME[4] = {"COPY A TO B", "COPY B TO A", "INIT SCENE", "INIT ALL"};
 
@@ -723,24 +889,15 @@ static const char *view_title(void)
     switch (view) {
     case V_SCALE: return "SCALE";
     case V_COPY: return "COPY INIT";
-    case V_SYS: return "SYSTEM";
-    case V_LFO: return lfo_pg == 2u ? "LFO 2" : "LFO 1";
-    case V_FX: return "FX";
-    case V_GLO: return "GLOBAL";
-    case V_RAND: return rand_pg ? "RANDOM 2" : "RANDOM 1";
-    case V_INST: return "INSTRUMENT";
-    default: return save_mode ? "SAVE TO" : "RECALL";
+    default: return "SYSTEM";
     }
 }
 static void setrow(row_t *r, const char *l, int16_t bar, int hl) { char *p = p_str(r->label, l); *p = 0; r->bar = bar; r->hl = (uint8_t)hl; r->value[0] = 0; }
-static void setval_pct(row_t *r, uint32_t v) { char *p = p_pct(r->value, v); *p = 0; }
 static void setval_s(row_t *r, const char *s) { char *p = p_str(r->value, s); *p = 0; }
 static void setval_n(row_t *r, uint32_t v) { char *p = p_num(r->value, v); *p = 0; }
 
 static uint32_t view_row(uint32_t i, row_t *r)  /* 0: no such row */
 {
-    scene_t *s = &cur.sc[edit_sc];
-    uint32_t pi;
     switch (view) {
     case V_SCALE:
         if (i == 0) { setrow(r, "ROOT", -1, 0); setval_s(r, ROOT_NAME[cur.root % 12u]); return 1; }
@@ -754,37 +911,6 @@ static uint32_t view_row(uint32_t i, row_t *r)  /* 0: no such row */
         if (i == 1) { setrow(r, "OUT A CH", -1, 0); setval_n(r, (uint32_t)glob.ch[0] + 1u); return 1; }
         if (i == 2) { setrow(r, "OUT B CH", -1, 0); setval_n(r, (uint32_t)glob.ch[1] + 1u); return 1; }
         if (i == 3) { char *p; setrow(r, "DSP LOAD", (int16_t)clampi((int32_t)dsp_pct * 255 / 100, 0, 255), 0); p = p_num(r->value, dsp_pct); *p++ = '%'; *p = 0; return 1; }
-        return 0;
-    case V_LFO:
-        if (i < 3u) {
-            pi = (lfo_pg == 2u ? 3u : 0u) + i;
-            setrow(r, PNAME[pi], cur.lfo_depth[pi], i == sel_row);
-            setval_s(r, LFO_RATE[cur.lfo_rate[pi] % 5u]);
-            return 1;
-        }
-        return 0;
-    case V_FX:
-        if (i == 0) { setrow(r, "TIMBRE", s->timbre, 0); setval_pct(r, s->timbre); return 1; }
-        if (i == 1) { setrow(r, "DELAY", s->dsend, 0); setval_pct(r, s->dsend); return 1; }
-        if (i == 2) { setrow(r, "LEVEL", s->level, 0); setval_pct(r, s->level); return 1; }
-        return 0;
-    case V_GLO:
-        if (i == 0) { setrow(r, "BPM", -1, 0); setval_n(r, cur.bpm); return 1; }
-        if (i == 1) { setrow(r, "STEP", -1, 0); setval_s(r, DIV_NAME[cur.div & 3u]); return 1; }
-        if (i == 2) { char *p; setrow(r, "TRANSPOSE", -1, 0); p = p_sig(r->value, cur.tr); *p = 0; return 1; }
-        return 0;
-    case V_RAND:
-        if (i < 3u) {
-            pi = (rand_pg ? 3u : 0u) + i;
-            setrow(r, PNAME[pi], s->p[pi], 0);
-            if (pi == 3u) { char *p = p_sig(r->value, (int32_t)s->p[3] - 127); *p = 0; }
-            else setval_pct(r, s->p[pi]);
-            return 1;
-        }
-        if (i == 3u) { setrow(r, "KEYS 1-5 = DICE", -1, 0); return 1; }
-        return 0;
-    case V_INST:
-        if (i == 0) { setrow(r, edit_sc ? "SCENE B" : "SCENE A", -1, 0); setval_s(r, INST_NAME[s->inst % 5u]); return 1; }
         return 0;
     default:
         return 0;
@@ -817,9 +943,91 @@ static void draw_slots(void)                    /* the 16 preset slots: filled s
     cv_blit(0, 92);
 }
 
+/* one panel of a page: four cells, the lit half framed bright */
+static void draw_panel(int32_t hi, uint32_t y, int lit)
+{
+    uint32_t i;
+    uint16_t fc = lit ? pal[4] : pal[1];
+    cv_begin(240, 64, C_BLACK);
+    cv_rect(2, 0, 236, lit ? 2 : 1, fc);
+    cv_rect(2, 63, 236, lit ? 2 : 1, fc);
+    cv_rect(2, 0, lit ? 2 : 1, 64, fc);
+    cv_rect(237, 0, lit ? 2 : 1, 64, fc);
+    if (hi >= 0)
+        for (i = 0; i < 4u; i++) {
+            char name[12], val[16];
+            int32_t bar, x = 6 + (int32_t)i * 57, vy;
+            uint32_t scn;
+            const felucca_font_t *vf;
+            if (HALF[hi].c[i].kind == K_NONE) continue;
+            cell_text(HALF[hi].c[i], name, val, &bar, &scn);
+            cv_text(x + 3, 4, &FONT_S, name, lit ? pal[3] : pal[1]);
+            vf = text_w(&FONT_L, val) <= 52 ? &FONT_L : &FONT_S;
+            vy = vf == &FONT_L ? 20 : 28;
+            cv_text(x + (52 - text_w(vf, val)) / 2, vy, vf, val, lit ? pal[4] : pal[2]);
+            if (bar >= 0) {
+                cv_rect(x + 3, 56, 46, 3, pal[0]);
+                cv_rect(x + 3, 56, bar * 46 / 255, 3, lit ? pal[4] : pal[2]);
+            }
+            if (i) cv_rect(x - 2, 10, 1, 44, pal[0]);
+        }
+    cv_blit(0, y);
+}
+
+static uint32_t sig_str(const char *s)
+{
+    uint32_t h = 2166136261u;
+    while (*s) { h ^= (uint8_t)*s++; h *= 16777619u; }
+    return h;
+}
+static uint32_t panel_sig(int32_t hi, int lit)
+{
+    uint32_t i, h = lit ? 99u : 7u;
+    if (hi < 0) return h + 1u;
+    for (i = 0; i < 4u; i++) {
+        char name[12], val[16];
+        int32_t bar;
+        uint32_t scn;
+        cell_text(HALF[hi].c[i], name, val, &bar, &scn);
+        h = h * 31u + sig_str(name) + sig_str(val) * 7u + (uint32_t)(bar + 1);
+    }
+    return h;
+}
+
+/* the overlay: scene tag, the name, the value at double size, a bar of 45 segments */
+static void draw_ov_tag(void)
+{
+    const char *t = hud_scn == 1u ? "SCENE A" : "SCENE B";
+    cv_begin(240, 16, C_BLACK);
+    if (hud_scn) cv_text((240 - text_w(&FONT_S, t)) / 2, 0, &FONT_S, t, hud_scn == 1u ? C_A : C_B);
+    cv_blit(0, 28);
+}
+static void draw_ov_name(void)
+{
+    cv_begin(240, 32, C_BLACK);
+    cv_text((240 - text_w(&FONT_L, hud_name)) / 2, 0, &FONT_L, hud_name, pal[3]);
+    cv_blit(0, 50);
+}
+static void draw_ov_val(void)
+{
+    int32_t w2 = text_w(&FONT_L, hud_val) * 2;
+    cv_begin(240, 64, C_BLACK);
+    if (w2 <= 232) cv_text2((240 - w2) / 2, 0, &FONT_L, hud_val, pal[4]);
+    else cv_text((240 - text_w(&FONT_L, hud_val)) / 2, 16, &FONT_L, hud_val, pal[4]);
+    cv_blit(0, 96);
+}
+static void draw_ov_bar(void)
+{
+    uint32_t i, lit = hud_bar >= 0 ? (uint32_t)hud_bar * 45u / 255u : 0u;
+    cv_begin(240, 24, C_BLACK);
+    if (hud_bar >= 0)
+        for (i = 0; i < 45u; i++) cv_rect(8 + (int32_t)i * 5, 4, 4, 16, i < lit ? pal[4] : pal[0]);
+    cv_blit(0, 176);
+}
+
 static uint32_t t_anim, t_rows, t_tower;
-static char head_cache[8];
-static uint32_t foot_sig, morph_sig, slots_sig;
+static char head_cache[8], pg_head[40];
+static uint32_t foot_sig, morph_sig, slots_sig, pg_sig[2], ov_sig[3];
 
 static uint32_t sig_of(const void *p, uint32_t n)
 {
@@ -837,32 +1045,59 @@ static void draw_tick(void)
         lcd_fill(0, 0, 240, 240, C_BLACK);
         view_drawn = view;
         for (i = 0; i < 5u; i++) rows_cache[i][0] = 1;
-        head_cache[0] = 1; foot_sig = 0; morph_sig = 0; slots_sig = 0;
+        head_cache[0] = 0x7F; pg_head[0] = 1;                 /* (a value no header has: it is drawn again) */
+        foot_sig = 0; morph_sig = 0; slots_sig = 0; pg_sig[0] = pg_sig[1] = 0;
+        ov_sig[0] = ov_sig[1] = ov_sig[2] = 0;
         t_anim = 0;
-        if (view != V_PERF) draw_text_box(0, 18, 240, &FONT_L, view_title(), pal[4], 1);
+        if (view == V_SCALE || view == V_COPY || view == V_SYS) draw_text_box(0, 18, 240, &FONT_L, view_title(), pal[4], 1);
         return;
     }
-    if (view == V_PERF) {
-        char hs[8];
-        hs[0] = (char)(edit_sc + 1u); hs[1] = (char)(cur.mode + 1u); hs[2] = (char)(latch + 1u);
-        hs[3] = (char)(cur.poly + 1u); hs[4] = (char)(frozen + 1u); hs[5] = (char)(cur.bpm);
-        hs[6] = (char)(1u + glob.theme); hs[7] = 0;
-        if (memcmp(head_cache, hs, 7) != 0) { memcpy(head_cache, hs, 8); draw_head(); return; }
-        {
-            uint32_t m = sig_of(&cur.morph_pos, 1) ^ ((uint32_t)edit_sc << 8) ^ ((uint32_t)mute_mask << 12) ^ sig_of(cur.lfo_rate, 12) ^ ((uint32_t)glob.theme << 20);
-            if (m != morph_sig) { morph_sig = m; draw_morph(); return; }
+    if (view == V_OVL) {
+        uint32_t s0 = sig_str(hud_name) + hud_scn * 977u, s1 = sig_str(hud_val), s2 = (uint32_t)(hud_bar + 1) * 2654435761u + 1u;
+        if (s0 != ov_sig[0]) { ov_sig[0] = s0; draw_ov_tag(); return; }
+        if (s1 != ov_sig[1]) { ov_sig[1] = s1; draw_ov_name(); draw_ov_val(); return; }
+        if (s2 != ov_sig[2]) { ov_sig[2] = s2; draw_ov_bar(); return; }
+        return;
+    }
+    if (view == V_PERF || view == V_PAGE) {
+        uint32_t m = sig_of(&cur.morph_pos, 1) ^ ((uint32_t)edit_sc << 8) ^ ((uint32_t)mute_mask << 12) ^ sig_of(cur.lfo_rate, 12) ^ ((uint32_t)glob.theme << 20);
+        uint32_t f = sig_of(&cur.density, 2) ^ ((uint32_t)cur.oct << 16) ^ ((uint32_t)glob.theme << 24);
+        if (view == V_PERF) {
+            char hs[8];
+            hs[0] = (char)(edit_sc + 1u); hs[1] = (char)(cur.mode + 1u); hs[2] = (char)(latch + 1u);
+            hs[3] = (char)(cur.poly + 1u + 2u * auto_roll); hs[4] = (char)(frozen + 1u); hs[5] = (char)(cur.bpm);
+            hs[6] = (char)(1u + glob.theme); hs[7] = 0;
+            if (memcmp(head_cache, hs, 7) != 0) { memcpy(head_cache, hs, 8); draw_head(); return; }
+        } else {
+            int32_t lit = cur_half, top = lit - HALF[lit].pos;
+            int32_t bot = (top + 1 < NHALF && HALF[top + 1].group == HALF[top].group && HALF[top + 1].pos == 1) ? top + 1 : -1;
+            char hs[40], *p;
+            uint32_t s0, s1;
+            memset(hs, 0, sizeof hs);
+            p = p_str(hs, GROUP_NAME[HALF[lit].group]);
+            p = p_str(p, "  ");
+            p_str(p, HALF[lit].tab);
+            if (memcmp(pg_head, hs, sizeof hs) != 0) { memcpy(pg_head, hs, sizeof hs); draw_text_box(8, 2, 224, &FONT_S, hs, pal[4], 0); return; }
+            s0 = panel_sig(top, HALF[lit].pos == 0);
+            if (s0 != pg_sig[0]) { pg_sig[0] = s0; draw_panel(top, 22, HALF[lit].pos == 0); return; }
+            s1 = panel_sig(bot, HALF[lit].pos == 1);
+            if (s1 != pg_sig[1]) { pg_sig[1] = s1; draw_panel(bot, 92, HALF[lit].pos == 1); return; }
         }
-        {
-            uint32_t f = sig_of(&cur.density, 2) ^ ((uint32_t)cur.oct << 16) ^ ((uint32_t)glob.theme << 24);
-            if (f != foot_sig) { foot_sig = f; draw_foot(); return; }
+        if (m != morph_sig) { morph_sig = m; draw_morph(); return; }
+        if (f != foot_sig) { foot_sig = f; draw_foot(); return; }
+        if (view == V_PERF) {
+            if (fm1_ms - t_anim >= 70u) { t_anim = fm1_ms; gyaw += 0x01400000u; draw_globe_hud(); return; }
+            if (fm1_ms - t_tower >= 45u) { t_tower = fm1_ms; draw_towers(); return; }
         }
-        if (fm1_ms - t_anim >= 70u) { t_anim = fm1_ms; gyaw += 0x01400000u; draw_globe_hud(); return; }
-        if (fm1_ms - t_tower >= 45u) { t_tower = fm1_ms; draw_towers(); return; }
-    } else if (view == V_SLOTS) {
+        return;
+    }
+    if (view == V_SLOTS) {
         uint32_t m = (uint32_t)glob.slot ^ ((uint32_t)save_mode << 8);
         for (i = 0; i < 16u; i++) m = m * 31u + bank.p[i].used;
         if (m != slots_sig) { slots_sig = m; draw_slots(); return; }
-    } else if (fm1_ms - t_rows >= 15u) {
+        return;
+    }
+    if (fm1_ms - t_rows >= 15u) {
         for (i = 0; i < 5u; i++) {
             row_t r;
             char key[28], *p = key;
@@ -888,21 +1123,18 @@ static const uint8_t WHITE_KEY[16] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 
 static const uint8_t BLACK_KEY[11] = {1, 3, 5, 8, 10, 13, 15, 17, 20, 22, 25};
 #define KEY0 53u                                /* key 0 = F3 */
 
-static void dice(uint32_t what)
+static void roll(void)                          /* randomise the scene the knobs edit */
 {
     scene_t *s = &cur.sc[edit_sc];
     uint32_t i;
-    if (what == 0 || what == 4) for (i = 0; i < 8u; i++) s->fader[i] = (uint8_t)rnd8();
-    if (what == 1 || what == 4) { s->p[1] = (uint8_t)(rnd8() >> 1); s->p[2] = (uint8_t)(26u + rnd8() * 229u / 255u); }
-    if (what == 2 || what == 4) { cur.div = (uint8_t)(rnd8() >> 6); cur.oct = (int8_t)((int32_t)(rnd32() % 7u) - 3); }
-    if (what == 3 || what == 4) { s->p[0] = (uint8_t)rnd8(); s->p[3] = (uint8_t)(rnd8() % 255u); s->p[4] = (uint8_t)rnd8(); s->p[5] = (uint8_t)rnd8(); }
-    {
-        static const char *const N[5] = {"MELO", "ARTI", "TIME", "NAVY", "ALL"};
-        hud("DICE", N[what > 4u ? 4u : what], -1);
-    }
+    for (i = 0; i < 8u; i++) s->fader[i] = (uint8_t)rnd8();
+    s->p[0] = (uint8_t)rnd8();
+    s->p[1] = (uint8_t)(rnd8() >> 1);
+    s->p[2] = (uint8_t)(26u + rnd8() * 229u / 255u);
+    s->p[3] = (uint8_t)(rnd8() % 255u);
+    s->p[4] = (uint8_t)rnd8();
+    s->p[5] = (uint8_t)(rnd8() >> 1);
 }
-
-static void adj(uint8_t *v, int32_t d, int32_t step) { *v = (uint8_t)clampi((int32_t)*v + d * step, 0, 255); }
 
 static void do_copy(void)
 {
@@ -926,11 +1158,10 @@ static void save_slot(uint32_t slot)
 static void select_view(void)
 {
     uint8_t v = V_PERF;
-    if (save_mode || recall_mode) v = V_SLOTS;
+    if (fm1_ms < hud_until) v = V_OVL;
+    else if (save_mode || recall_mode) v = V_SLOTS;
     else if (tr_view) v = tr_view;
-    else if (glo_on) v = V_GLO;
-    else if (fx_on) v = V_FX;
-    else if (lfo_pg) v = V_LFO;
+    else if (cur_half >= 0) v = V_PAGE;
     view = v;
 }
 
@@ -938,21 +1169,23 @@ typedef struct { preset_t cur; uint8_t ver, theme, ch0, ch1, slot; } saved_t;
 
 static void leds(uint32_t lit_notes)
 {
-    uint32_t i, blink = (fm1_ms >> 8) & 1u;
+    uint32_t i, blink = (fm1_ms >> 8) & 1u, slots = save_mode || recall_mode;
+    int32_t g = cur_half >= 0 ? (int32_t)HALF[cur_half].group : -1;
     fm1_led_key(BTN_ARP, cur.mode == MODE_ARP);
     fm1_led_key(BTN_SEQ, cur.mode == MODE_SEQ);
     fm1_led_key(BTN_SEL, cur.poly);
     fm1_led_key(BTN_REC, frozen);
     fm1_led_key(BTN_PLAY, running);
-    fm1_led_key(BTN_FX, fx_on);
-    fm1_led_key(BTN_LFO, lfo_pg != 0);
-    fm1_led_key(BTN_GLO, glo_on);
-    fm1_led_key(BTN_HOME, view == V_PERF);
+    fm1_led_key(BTN_EDIT, auto_roll);
+    fm1_led_key(BTN_FX, g == G_FX);
+    fm1_led_key(BTN_LFO, g == G_LFO);
+    fm1_led_key(BTN_GLO, g == G_GLO);
+    fm1_led_key(BTN_HOME, g < 0 || g == G_HOME);
     fm1_led_key(BTN_SAVE, save_mode ? blink : recall_mode);
     fm1_led_key(BTN_OCT_DOWN, cur.oct < 0);
     fm1_led_key(BTN_OCT_UP, cur.oct > 0);
     for (i = 0; i < 16u; i++) {
-        int on = view == V_SLOTS ? (bank.p[i].used != 0 && (i != glob.slot || blink)) : (int)((lit_notes >> WHITE_KEY[i]) & 1u);
+        int on = slots ? (bank.p[i].used != 0 && (i != glob.slot || blink)) : (int)((lit_notes >> WHITE_KEY[i]) & 1u);
         fm1_led_key(KEY_LED(WHITE_KEY[i]), on);
     }
     for (i = 0; i < 8u; i++) {
@@ -964,13 +1197,10 @@ static void leds(uint32_t lit_notes)
     fm1_led_key(KEY_LED(BLACK_KEY[10]), mute_mask != 0);
 }
 
-static void app_main(void)
+static saved_t sv;
+
+static void app_init(void)
 {
-    saved_t sv;
-    uint32_t prev = 0, k, dirty = 0, t_change = 0, save_t0 = 0, save_down = 0, save_long = 0, arp_t0 = 0, arp_down = 0,
-             arp_long = 0, t_ui = 0, mute_t0 = 0;
-    (void)hit_ticks;
-    uint8_t liven[27];
     preset_init(&cur);
     theme_set(0);
     globe_init();
@@ -983,223 +1213,232 @@ static void app_main(void)
         cur.tr = (int8_t)clampi(cur.tr, -12, 12);
         theme_set(glob.theme);
     }
-    memset(liven, 0, sizeof liven);
     dly_len = 22000;
     weights();
     lcd_fill(0, 0, 240, 240, C_BLACK);
     draw_text_box(0, 90, 240, &FONT_L, APP_NAME, pal[4], 1);
     draw_text_box(0, 130, 240, &FONT_S, "v" APP_VER, pal[2], 1);
-    while (fm1_ms < 1200u) platform_poll();
-    lcd_fill(0, 0, 240, 240, C_BLACK);
-    last_t = fm1_ticks();
+}
 
-    for (;;) {
-        uint32_t keys, down, up, rel, b, now = fm1_ticks(), lit = 0, kk;
-        uint8_t st, d1, d2;
-        int32_t e0, e1, e2, e3, e4, e5, e6;
-        platform_poll();
+static void app_step(void)                      /* one pass of the main loop (a browser calls it by itself) */
+{
+    static uint32_t prev, dirty, t_change, save_t0, save_down, save_long, arp_t0, arp_down, arp_long, edit_t0, edit_down,
+                    edit_long, t_ui, mute_t0;
+    static uint8_t liven[27], booted;
+    uint32_t k, keys, down, up, rel, b, now, lit = 0, kk;
+    uint8_t st, d1, d2;
+    int32_t e0, e1, e2, e3, e4, e5, e6;
+    uint32_t slots;
+    platform_poll();
+    if (fm1_ms < 1200u) return;                 /* the splash */
+    if (!booted) { booted = 1; lcd_fill(0, 0, 240, 240, C_BLACK); last_t = fm1_ticks(); }
+    now = fm1_ticks();
 
-        /* --- the clock: before anything slow */
-        update_eff(now - last_t);
-        last_t = now;
-        offs_run(now, 0);
-        if (running && (int32_t)(now - next_t) >= 0) {
-            uint32_t base = step_ticks(), sw = (base >> 8) * (((uint32_t)cur.swing * 115u) >> 8);
-            do_step();
-            next_t += (cstep & 1u) ? base - sw : base + sw;      /* (cstep is the step that just played: even steps are late) */
-            if ((int32_t)(now - next_t) > (int32_t)(base * 4u)) next_t = now + base;
-        }
+    /* --- the clock: before anything slow */
+    update_eff(now - last_t);
+    last_t = now;
+    offs_run(now, 0);
+    if (running && (int32_t)(now - next_t) >= 0) {
+        uint32_t base = step_ticks(), sw = (base >> 8) * (((uint32_t)cur.swing * 115u) >> 8);
+        do_step();
+        next_t += (cstep & 1u) ? base - sw : base + sw;      /* (cstep is the step that just played: even steps are late) */
+        if ((int32_t)(now - next_t) > (int32_t)(base * 4u)) next_t = now + base;
+    }
 
-        /* --- the keys */
-        keys = fm1_in.notes;
-        down = keys & ~prev;
-        up = prev & ~keys;
-        prev = keys;
-        for (k = 0; k < 16u; k++) {
-            uint32_t bit = 1u << WHITE_KEY[k], note = KEY0 + WHITE_KEY[k] + (uint32_t)((int32_t)cur.oct * 12 + cur.tr);
-            if (down & bit) {
-                if (view == V_SLOTS) {
-                    if (save_mode) { save_slot(k); save_mode = 0; hud_num("SAVED SLOT", (int32_t)k + 1, 0); }
-                    else if (recall_mode) {
-                        bank_open();
-                        if (bank.p[k].used) {
-                            if (running) pend_slot = (int32_t)k; else recall_apply((int32_t)k);
-                            glob.slot = (uint8_t)k;
-                        }
+    /* --- the keys */
+    slots = save_mode || recall_mode;
+    keys = fm1_in.notes;
+    down = keys & ~prev;
+    up = prev & ~keys;
+    prev = keys;
+    for (k = 0; k < 16u; k++) {
+        uint32_t bit = 1u << WHITE_KEY[k], note = KEY0 + WHITE_KEY[k] + (uint32_t)((int32_t)cur.oct * 12 + cur.tr);
+        if (down & bit) {
+            if (slots) {
+                if (save_mode) { save_slot(k); save_mode = 0; hud_num("SAVED SLOT", (int32_t)k + 1, 0); }
+                else if (recall_mode) {
+                    bank_open();
+                    if (bank.p[k].used) {
+                        if (running) pend_slot = (int32_t)k; else recall_apply((int32_t)k);
+                        glob.slot = (uint8_t)k;
                     }
-                    dirty = 1; t_change = fm1_ms;
-                } else if (hold_step_mask && cur.mode == MODE_SEQ) {        /* SEQ: hold a step key, tap a note */
-                    for (kk = 0; kk < 8u; kk++)
-                        if (hold_step_mask >> kk & 1u) {
-                            cur.sc[edit_sc].seq[kk] = (uint8_t)clampi((int32_t)note, 0, 127);
-                            note_on(edit_sc, note, 3600000u);
-                            hud_note("STEP NOTE", note);
-                            dirty = 1; t_change = fm1_ms;
-                        }
-                } else {
-                    liven[k] = (uint8_t)clampi((int32_t)note, 0, 127);
-                    key_note(liven[k], 1);
                 }
-            }
-            if (up & bit) {
-                if (liven[k]) { key_note(liven[k], 0); liven[k] = 0; }
-            }
-        }
-        for (k = 0; k < 11u; k++) {
-            uint32_t bit = 1u << BLACK_KEY[k];
-            if (down & bit) {
-                if (view == V_RAND && k < 5u) { dice(k); dirty = 1; t_change = fm1_ms; tr_t0 = fm1_ms; }
-                else if (k < 8u) hold_step_mask |= 1u << k;
-                else if (k == 8u || k == 9u) { edit_sc = (uint8_t)(k - 8u); hud("EDIT", edit_sc ? "SCENE B" : "SCENE A", -1); }
-                else { mute_t0 = fm1_ms; hold_step_mask |= 1u << 10; }
-            }
-            if (up & bit) {
-                if (k < 8u) {
-                    if (hold_step_mask & (1u << 10)) { mute_mask ^= (uint8_t)(1u << k); dirty = 1; t_change = fm1_ms; }
-                    hold_step_mask &= ~(1u << k);
-                } else if (k == 10u) {
-                    if (fm1_ms - mute_t0 < 500u && !(hold_step_mask & 0xFFu)) { mute_mask = mute_mask ? 0 : 0xFFu; hud("MUTE", mute_mask ? "ALL" : "OFF", -1); }
-                    hold_step_mask &= ~(1u << 10);
-                    dirty = 1; t_change = fm1_ms;
-                }
+                dirty = 1; t_change = fm1_ms;
+            } else if (hold_step_mask && cur.mode == MODE_SEQ) {        /* SEQ: hold a step key, tap a note */
+                for (kk = 0; kk < 8u; kk++)
+                    if (hold_step_mask >> kk & 1u) {
+                        cur.sc[edit_sc].seq[kk] = (uint8_t)clampi((int32_t)note, 0, 127);
+                        note_on(edit_sc, note, 3600000u);
+                        hud_note("STEP NOTE", note);
+                        hud_scn = (uint8_t)(edit_sc + 1u);
+                        dirty = 1; t_change = fm1_ms;
+                    }
+            } else {
+                liven[k] = (uint8_t)clampi((int32_t)note, 0, 127);
+                key_note(liven[k], 1);
             }
         }
-        for (k = 0; k < 27u; k++) if (keys >> k & 1u) { lit |= 1u << k; }
-
-        /* --- the buttons */
-        b = fm1_input_edges(&rel);
-        if (b & (1u << BTN_OCT_DOWN) && cur.oct > -3) { cur.oct--; dirty = 1; t_change = fm1_ms; hud_num("OCTAVE", cur.oct, 1); }
-        if (b & (1u << BTN_OCT_UP) && cur.oct < 3) { cur.oct++; dirty = 1; t_change = fm1_ms; hud_num("OCTAVE", cur.oct, 1); }
-        if (b & (1u << BTN_ARP)) { arp_down = 1; arp_t0 = fm1_ms; arp_long = 0; }
-        if (arp_down && !arp_long && fm1_ms - arp_t0 > 600u) {                       /* long: Latch */
-            arp_long = 1;
-            latch = !latch;
-            if (!latch) { latch_len = 0; first_of_chord = 1; }
-            hud("LATCH", latch ? "ON" : "OFF", -1);
-            dirty = 1; t_change = fm1_ms;
-        }
-        if (rel & (1u << BTN_ARP)) {
-            if (!arp_long) { cur.mode = MODE_ARP; hud("MODE", "ARP", -1); dirty = 1; t_change = fm1_ms; }
-            arp_down = 0;
-        }
-        if (b & (1u << BTN_SEQ)) { cur.mode = MODE_SEQ; hud("MODE", "SEQ", -1); dirty = 1; t_change = fm1_ms; }
-        if (b & (1u << BTN_SEL)) { cur.poly = !cur.poly; hud("POLY", cur.poly ? "ON" : "OFF", -1); dirty = 1; t_change = fm1_ms; }
-        if (b & (1u << BTN_REC)) { freeze_set(!frozen); hud("FREEZE", frozen ? "ON" : "OFF", -1); }
-        if (b & (1u << BTN_PLAY)) { transport(!running); hud(running ? "PLAY" : "STOP", "", -1); }
-        if (b & ((1u << BTN_FX) | (1u << BTN_LFO) | (1u << BTN_GLO))) { tr_view = 0; menu_pg = 0; }   /* a page button shows its page at once */
-        if (b & (1u << BTN_FX)) { fx_on = !fx_on; if (fx_on) { glo_on = 0; lfo_pg = 0; } }
-        if (b & (1u << BTN_LFO)) { lfo_pg = (uint8_t)((lfo_pg + 1u) % 3u); if (lfo_pg) { glo_on = 0; fx_on = 0; sel_row = 0; } }
-        if (b & (1u << BTN_GLO)) { glo_on = !glo_on; if (glo_on) { fx_on = 0; lfo_pg = 0; } }
-        if (b & (1u << BTN_HOME)) { glo_on = fx_on = 0; lfo_pg = 0; tr_view = 0; menu_pg = 0; save_mode = recall_mode = 0; }
-        if (b & (1u << BTN_SAVE)) {
-            if (view == V_COPY) { do_copy(); dirty = 1; t_change = fm1_ms; tr_t0 = fm1_ms; }
-            else { save_down = 1; save_t0 = fm1_ms; save_long = 0; }
-        }
-        if (save_down && !save_long && fm1_ms - save_t0 > 600u) {                    /* long: recall mode, stays */
-            save_long = 1;
-            save_mode = 0;
-            recall_mode = !recall_mode;
-            bank_open();
-        }
-        if (rel & (1u << BTN_SAVE)) {
-            if (save_down && !save_long) {
-                if (save_mode) save_mode = 0;
-                else if (!recall_mode) { save_mode = 1; bank_open(); }
-            }
-            save_down = 0;
-        }
-
-        /* --- the encoders: what they do depends on the screen */
-        e0 = fm1_enc_take(ENC_SELECT);
-        e1 = fm1_enc_take(ENC_ALGORITHM);
-        e2 = fm1_enc_take(ENC_KNOB1);
-        e3 = fm1_enc_take(ENC_KNOB2);
-        e4 = fm1_enc_take(ENC_KNOB3);
-        e5 = fm1_enc_take(ENC_KNOB4);
-        e6 = fm1_enc_take(ENC_PRESETS);
-        if (e0) { menu_pg = (uint8_t)clampi((int32_t)menu_pg + (e0 > 0 ? 1 : -1), 0, 3); tr_view = menu_pg ? (uint8_t)(V_SCALE + menu_pg - 1u) : 0; tr_t0 = fm1_ms; }
-        if (e1) { rand_pg = (uint8_t)(e1 > 0); tr_view = V_RAND; menu_pg = 0; tr_t0 = fm1_ms; }
-        if (e6) { adj(&cur.sc[edit_sc].inst, e6 > 0 ? 1 : -1, 1); if (cur.sc[edit_sc].inst > 4u) cur.sc[edit_sc].inst = (uint8_t)(e6 > 0 ? 4 : 0); tr_view = V_INST; tr_t0 = fm1_ms; dirty = 1; t_change = fm1_ms; }
-        if (e5) {
-            adj(&cur.morph_pos, e5, 3);
-            hud_pct("A TO B", cur.morph_pos);
-            dirty = 1; t_change = fm1_ms;
-        }
-        if (e2 | e3 | e4) {
-            scene_t *s = &cur.sc[edit_sc];
-            uint32_t pi;
-            switch (view) {
-            case V_SCALE:
-                if (e2) cur.root = (uint8_t)clampi((int32_t)cur.root + (e2 > 0 ? 1 : -1), 0, 11);
-                if (e3) cur.scale = (uint8_t)clampi((int32_t)cur.scale + (e3 > 0 ? 1 : -1), 0, 9);
-                tr_t0 = fm1_ms;
-                break;
-            case V_COPY:
-                if (e2) copy_act = (uint8_t)clampi((int32_t)copy_act + (e2 > 0 ? 1 : -1), 0, 3);
-                tr_t0 = fm1_ms;
-                break;
-            case V_SYS:
-                if (e2) { glob.theme = (uint8_t)((glob.theme + 3u + (e2 > 0 ? 1u : 2u)) % 3u); theme_set(glob.theme); view_drawn = 255; }
-                if (e3) glob.ch[0] = (uint8_t)clampi((int32_t)glob.ch[0] + (e3 > 0 ? 1 : -1), 0, 15);
-                if (e4) glob.ch[1] = (uint8_t)clampi((int32_t)glob.ch[1] + (e4 > 0 ? 1 : -1), 0, 15);
-                tr_t0 = fm1_ms;
-                break;
-            case V_LFO:
-                pi = (lfo_pg == 2u ? 3u : 0u) + sel_row;
-                if (e2) sel_row = (uint8_t)clampi((int32_t)sel_row + (e2 > 0 ? 1 : -1), 0, 2);
-                if (e3) cur.lfo_rate[pi] = (uint8_t)clampi((int32_t)cur.lfo_rate[pi] + (e3 > 0 ? 1 : -1), 0, 4);
-                if (e4) adj(&cur.lfo_depth[pi], e4, 8);
-                break;
-            case V_FX:
-                if (e2) adj(&s->timbre, e2, 4);
-                if (e3) adj(&s->dsend, e3, 4);
-                if (e4) adj(&s->level, e4, 4);
-                break;
-            case V_GLO:
-                if (e2) cur.bpm = (uint8_t)clampi((int32_t)cur.bpm + e2, 40, 240);
-                if (e3) cur.div = (uint8_t)clampi((int32_t)cur.div + (e3 > 0 ? 1 : -1), 0, 3);
-                if (e4) cur.tr = (int8_t)clampi((int32_t)cur.tr + (e4 > 0 ? 1 : -1), -12, 12);
-                break;
-            case V_RAND:
-                pi = rand_pg ? 3u : 0u;
-                if (e2) adj(&s->p[pi], e2, 6);
-                if (e3) adj(&s->p[pi + 1u], e3, 6);
-                if (e4) adj(&s->p[pi + 2u], e4, 6);
-                tr_t0 = fm1_ms;
-                break;
-            default:                                                                  /* the performance screen */
-                if (e2 && (hold_step_mask & 0xFFu)) {
-                    uint32_t first = 8;
-                    for (kk = 0; kk < 8u; kk++)
-                        if (hold_step_mask >> kk & 1u) { adj(&s->fader[kk], e2, 8); if (first > 7u) first = kk; }
-                    hud_pct("STEP LEVEL", s->fader[first & 7u]);
-                }
-                if (e3) { adj(&cur.density, e3, 4); hud_pct("DENSITY", cur.density); }
-                if (e4) { adj(&cur.swing, e4, 4); hud_pct("SWING", cur.swing); }
-                break;
-            }
-            dirty = 1; t_change = fm1_ms;
-        }
-
-        /* --- MIDI in: notes play like the keys, any channel */
-        while (midi_get(&st, &d1, &d2)) {
-            if ((st & 0xF0u) == 0x90u && d2) key_note(d1, 1);
-            else if ((st & 0xF0u) == 0x80u || (st & 0xF0u) == 0x90u) key_note(d1, 0);
-        }
-
-        /* --- bookkeeping: the screens that leave by themselves, the sound's settings, the screen */
-        if (tr_view && fm1_ms - tr_t0 > 2500u) { tr_view = 0; menu_pg = 0; }
-        { static uint32_t t_dsp; if (fm1_ms - t_dsp >= 500u) { uint32_t m = dsp_max; dsp_max = 0; t_dsp = fm1_ms; dsp_pct = m / 1392u; } }   /* % of one 5.8 ms block = 139200 ticks; under 50 is comfortable (docs/RULES.md) */
-        weights();
-        { uint32_t bpm = cur.bpm < 40u ? 40u : cur.bpm; dly_len = (int32_t)clampi((int32_t)(1984500u / bpm), 1000, 65000); }
-        select_view();
-        if (fm1_ms - t_ui >= 12u) { t_ui = fm1_ms; leds(lit); }
-        draw_tick();
-
-        if (dirty && !busy && fm1_ms - t_change > 2000u) {                          /* save when silent: an erase stalls the sound */
-            sv.cur = cur; sv.ver = 1; sv.theme = glob.theme; sv.ch0 = glob.ch[0]; sv.ch1 = glob.ch[1]; sv.slot = glob.slot;
-            settings_save(&sv, sizeof sv);
-            dirty = 0;
+        if (up & bit) {
+            if (liven[k]) { key_note(liven[k], 0); liven[k] = 0; }
         }
     }
+    for (k = 0; k < 11u; k++) {
+        uint32_t bit = 1u << BLACK_KEY[k];
+        if (down & bit) {
+            if (k < 8u) hold_step_mask |= 1u << k;
+            else if (k == 8u || k == 9u) { edit_sc = (uint8_t)(k - 8u); hud("EDIT", edit_sc ? "SCENE B" : "SCENE A", -1); hud_scn = (uint8_t)(edit_sc + 1u); }
+            else { mute_t0 = fm1_ms; hold_step_mask |= 1u << 10; }
+        }
+        if (up & bit) {
+            if (k < 8u) {
+                if (hold_step_mask & (1u << 10)) { mute_mask ^= (uint8_t)(1u << k); dirty = 1; t_change = fm1_ms; }
+                hold_step_mask &= ~(1u << k);
+            } else if (k == 10u) {
+                if (fm1_ms - mute_t0 < 500u && !(hold_step_mask & 0xFFu)) { mute_mask = mute_mask ? 0 : 0xFFu; hud("MUTE", mute_mask ? "ALL" : "OFF", -1); }
+                hold_step_mask &= ~(1u << 10);
+                dirty = 1; t_change = fm1_ms;
+            }
+        }
+    }
+    for (k = 0; k < 27u; k++) if (keys >> k & 1u) { lit |= 1u << k; }
+
+    /* --- the buttons */
+    b = fm1_input_edges(&rel);
+    if (b & (1u << BTN_OCT_DOWN) && cur.oct > -3) { cur.oct--; dirty = 1; t_change = fm1_ms; hud_num("OCTAVE", cur.oct, 1); ov_btn = 1u << BTN_OCT_DOWN; }
+    if (b & (1u << BTN_OCT_UP) && cur.oct < 3) { cur.oct++; dirty = 1; t_change = fm1_ms; hud_num("OCTAVE", cur.oct, 1); ov_btn = 1u << BTN_OCT_UP; }
+    if (b & (1u << BTN_ARP)) { arp_down = 1; arp_t0 = fm1_ms; arp_long = 0; }
+    if (arp_down && !arp_long && fm1_ms - arp_t0 > 600u) {                       /* long: Latch */
+        arp_long = 1;
+        latch = !latch;
+        if (!latch) { latch_len = 0; first_of_chord = 1; }
+        hud_btn("LATCH", latch ? "ON" : "OFF", BTN_ARP);
+        dirty = 1; t_change = fm1_ms;
+    }
+    if (rel & (1u << BTN_ARP)) {
+        if (!arp_long) { cur.mode = MODE_ARP; hud("MODE", "ARP", -1); dirty = 1; t_change = fm1_ms; }
+        arp_down = 0;
+    }
+    if (b & (1u << BTN_SEQ)) { cur.mode = MODE_SEQ; hud_btn("MODE", "SEQ", BTN_SEQ); dirty = 1; t_change = fm1_ms; }
+    if (b & (1u << BTN_SEL)) { cur.poly = !cur.poly; hud_btn("POLY", cur.poly ? "ON" : "OFF", BTN_SEL); dirty = 1; t_change = fm1_ms; }
+    if (b & (1u << BTN_REC)) { freeze_set(!frozen); hud_btn("FREEZE", frozen ? "ON" : "OFF", BTN_REC); }
+    if (b & (1u << BTN_PLAY)) { transport(!running); hud_btn(running ? "PLAY" : "STOP", running ? "RUNNING" : "STOPPED", BTN_PLAY); }
+    if (b & (1u << BTN_EDIT)) { edit_down = 1; edit_t0 = fm1_ms; edit_long = 0; }
+    if (edit_down && !edit_long && fm1_ms - edit_t0 > 600u) {                    /* long: auto re-roll each measure */
+        edit_long = 1;
+        auto_roll = !auto_roll;
+        hud_btn("AUTO ROLL", auto_roll ? "ON" : "OFF", BTN_EDIT);
+    }
+    if (rel & (1u << BTN_EDIT)) {
+        if (edit_down && !edit_long) { roll(); hud("RANDOMISED", edit_sc ? "SCENE B" : "SCENE A", -1); hud_scn = (uint8_t)(edit_sc + 1u); dirty = 1; t_change = fm1_ms; }
+        edit_down = 0;
+    }
+    if (b & ((1u << BTN_FX) | (1u << BTN_LFO) | (1u << BTN_GLO) | (1u << BTN_HOME))) { tr_view = 0; menu_pg = 0; hud_until = 0; }
+    if (b & (1u << BTN_FX)) goto_group(G_FX);
+    if (b & (1u << BTN_LFO)) goto_group(G_LFO);
+    if (b & (1u << BTN_GLO)) goto_group(G_GLO);
+    if (b & (1u << BTN_HOME)) {
+        save_mode = recall_mode = 0;
+        if (cur_half >= 0 && HALF[cur_half].group != G_HOME) cur_half = -1;
+        else goto_group(G_HOME);
+    }
+    if (b & (1u << BTN_SAVE)) {
+        if (tr_view == V_COPY) { do_copy(); dirty = 1; t_change = fm1_ms; tr_t0 = fm1_ms; }
+        else { save_down = 1; save_t0 = fm1_ms; save_long = 0; }
+    }
+    if (save_down && !save_long && fm1_ms - save_t0 > 600u) {                    /* long: recall mode, stays */
+        save_long = 1;
+        save_mode = 0;
+        recall_mode = !recall_mode;
+        bank_open();
+    }
+    if (rel & (1u << BTN_SAVE)) {
+        if (save_down && !save_long) {
+            if (save_mode) save_mode = 0;
+            else if (!recall_mode) { save_mode = 1; bank_open(); }
+        }
+        save_down = 0;
+    }
+    if (ov_btn) {                                                               /* a button's message stays while it is held */
+        if (fm1_in.buttons & ov_btn) hud_until = fm1_ms + 450u;
+        else ov_btn = 0;
+    }
+
+    /* --- the encoders */
+    e0 = fm1_enc_take(ENC_SELECT);
+    e1 = fm1_enc_take(ENC_ALGORITHM);
+    e2 = fm1_enc_take(ENC_KNOB1);
+    e3 = fm1_enc_take(ENC_KNOB2);
+    e4 = fm1_enc_take(ENC_KNOB3);
+    e5 = fm1_enc_take(ENC_KNOB4);
+    e6 = fm1_enc_take(ENC_PRESETS);
+    if (e0) { menu_pg = (uint8_t)clampi((int32_t)menu_pg + (e0 > 0 ? 1 : -1), 0, 3); tr_view = menu_pg ? (uint8_t)(V_SCALE + menu_pg - 1u) : 0; tr_t0 = fm1_ms; }
+    if (e1) { cell_t ab = {K_AB, 0}; cell_adj(ab, knob_delta(1, e1)); cell_overlay(ab); dirty = 1; t_change = fm1_ms; }      /* the A-to-B crossfade, on every screen */
+    if (e6) {
+        cell_t ins = {K_INST, 0};
+        ins.arg = edit_sc;
+        cell_adj(ins, e6);
+        cell_overlay(ins);
+        dirty = 1; t_change = fm1_ms;
+    }
+    if (e2 | e3 | e4 | e5) {
+        int32_t ev[4], i;
+        ev[0] = e2; ev[1] = e3; ev[2] = e4; ev[3] = e5;
+        if (tr_view) {                                                          /* the menus */
+            tr_t0 = fm1_ms;
+            if (tr_view == V_SCALE) {
+                if (e2) cur.root = (uint8_t)clampi((int32_t)cur.root + (e2 > 0 ? 1 : -1), 0, 11);
+                if (e3) cur.scale = (uint8_t)clampi((int32_t)cur.scale + (e3 > 0 ? 1 : -1), 0, 9);
+            } else if (tr_view == V_COPY) {
+                if (e2) copy_act = (uint8_t)clampi((int32_t)copy_act + (e2 > 0 ? 1 : -1), 0, 3);
+            } else {
+                if (e2) { theme_set((uint32_t)((int32_t)glob.theme + 3 + (e2 > 0 ? 1 : -1)) % 3u); view_drawn = 255; }
+                if (e3) glob.ch[0] = (uint8_t)clampi((int32_t)glob.ch[0] + (e3 > 0 ? 1 : -1), 0, 15);
+                if (e4) glob.ch[1] = (uint8_t)clampi((int32_t)glob.ch[1] + (e4 > 0 ? 1 : -1), 0, 15);
+            }
+        } else {
+            const half_t *h = &HALF[cur_half >= 0 ? cur_half : 1];            /* the performance screen turns the RHYTHM cells */
+            for (i = 0; i < 4; i++) {
+                cell_t c = h->c[i];
+                if (!ev[i] || c.kind == K_NONE) continue;
+                if (cur_half < 0 && i == 0 && (hold_step_mask & 0xFFu)) {      /* K1 with a step key held: that step's level */
+                    uint32_t first = 8;
+                    for (kk = 0; kk < 8u; kk++)
+                        if (hold_step_mask >> kk & 1u) { adj(&cur.sc[edit_sc].fader[kk], knob_delta(2, ev[i]), 3); if (first > 7u) first = kk; }
+                    hud_pct("STEP LEVEL", cur.sc[edit_sc].fader[first & 7u]);
+                    hud_scn = (uint8_t)(edit_sc + 1u);
+                } else {
+                    cell_adj(c, c.kind == K_P || c.kind == K_DENS || c.kind == K_SWING || c.kind == K_LDEP || c.kind == K_TIMB || c.kind == K_DLY || c.kind == K_LVL || c.kind == K_BPM ? knob_delta((uint32_t)(2 + i), ev[i]) : ev[i]);
+                    cell_overlay(c);
+                }
+            }
+        }
+        dirty = 1; t_change = fm1_ms;
+    }
+
+    /* --- MIDI in: notes play like the keys, any channel */
+    while (midi_get(&st, &d1, &d2)) {
+        if ((st & 0xF0u) == 0x90u && d2) key_note(d1, 1);
+        else if ((st & 0xF0u) == 0x80u || (st & 0xF0u) == 0x90u) key_note(d1, 0);
+    }
+
+    /* --- bookkeeping: the screens that leave by themselves, the sound's settings, the screen */
+    if (tr_view && fm1_ms - tr_t0 > 2500u) { tr_view = 0; menu_pg = 0; }
+    { static uint32_t t_dsp; if (fm1_ms - t_dsp >= 500u) { uint32_t m = dsp_max; dsp_max = 0; t_dsp = fm1_ms; dsp_pct = m / 1392u; } }   /* % of one 5.8 ms block = 139200 ticks; under 50 is comfortable (docs/RULES.md) */
+    weights();
+    { uint32_t bpm = cur.bpm < 40u ? 40u : cur.bpm; dly_len = (int32_t)clampi((int32_t)(1984500u / bpm), 1000, 65000); }
+    select_view();
+    if (fm1_ms - t_ui >= 12u) { t_ui = fm1_ms; leds(lit); }
+    draw_tick();
+
+    if (dirty && !busy && fm1_ms - t_change > 2000u) {                          /* save when silent: an erase stalls the sound */
+        sv.cur = cur; sv.ver = 1; sv.theme = glob.theme; sv.ch0 = glob.ch[0]; sv.ch1 = glob.ch[1]; sv.slot = glob.slot;
+        settings_save(&sv, sizeof sv);
+        dirty = 0;
+    }
+}
+
+static void app_main(void)
+{
+    app_init();
+    for (;;) app_step();
 }

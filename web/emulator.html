@@ -1,0 +1,282 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     The Formation emulator: the firmware's own code, compiled to WebAssembly (tests/web.c, tools/build_emu.py), with a
+     faceplate around it. Nothing here is a model of the firmware: the screen, the sound and the MIDI are what the
+     firmware itself makes. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Formation emulator</title>
+<style>
+  :root { --bg: #04100f; --panel: #0a1c1b; --fg: #e4f6f4; --dim: #7fa3a4; --acc: #3fd9d2; --line: #17302f; --lit: #7affee; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { margin: 0; font-size: 28px; letter-spacing: .1em; color: var(--acc); }
+  h1 small { font-size: 14px; color: var(--dim); letter-spacing: .05em; margin-left: 8px; }
+  h2 { font-size: 12px; letter-spacing: .12em; color: var(--dim); margin: 0 0 8px; text-transform: uppercase; }
+  a { color: var(--acc); }
+  .small { color: var(--dim); font-size: 13px; }
+  #stage { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 16px; align-items: flex-start; }
+  #screenwrap { background: #000; border: 6px solid #1c2c2b; border-radius: 22px; padding: 10px; }
+  #lcd { display: block; width: 480px; max-width: calc(100vw - 72px); aspect-ratio: 1; image-rendering: pixelated; background: #000; }
+  #panel { flex: 1; min-width: 320px; display: grid; gap: 18px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  #knobs { display: flex; flex-wrap: wrap; gap: 14px; }
+  .knob { width: 76px; text-align: center; user-select: none; touch-action: none; }
+  .dial { width: 52px; height: 52px; margin: 0 auto 4px; border-radius: 50%; background: #112624; border: 2px solid #28514e; position: relative; cursor: ns-resize; }
+  .dial::after { content: ""; position: absolute; left: 50%; top: 4px; width: 3px; height: 16px; margin-left: -1.5px; background: var(--acc); border-radius: 2px; }
+  .knob b { display: block; font-size: 11px; letter-spacing: .06em; }
+  .knob span { display: block; font-size: 10px; color: var(--dim); }
+  .knob .pm { display: flex; justify-content: center; gap: 4px; margin-top: 2px; }
+  .pm button { width: 24px; padding: 0; line-height: 18px; }
+  #buttons { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+  .btn { position: relative; padding: 14px 2px 8px; font-size: 11px; letter-spacing: .04em; text-align: center; background: #112624; border: 1px solid #28514e; border-radius: 6px; cursor: pointer; user-select: none; touch-action: none; }
+  .btn.on { border-color: var(--acc); }
+  .led { position: absolute; top: 5px; left: 50%; width: 10px; height: 4px; margin-left: -5px; border-radius: 2px; background: #1a3331; }
+  .on > .led { background: var(--lit); box-shadow: 0 0 6px var(--lit); }
+  #keys { position: relative; user-select: none; touch-action: none; }
+  #blackrow { position: relative; height: 40px; margin-bottom: 6px; }
+  #whiterow { display: grid; grid-template-columns: repeat(16, 1fr); gap: 4px; }
+  .key { position: relative; background: #112624; border: 1px solid #28514e; border-radius: 6px; cursor: pointer; }
+  .key.on { border-color: var(--acc); }
+  #whiterow .key { height: 54px; }
+  #blackrow .key { position: absolute; top: 0; width: 5.2%; height: 100%; transform: translateX(-50%); }
+  .key .led { top: 4px; }
+  .key i { position: absolute; bottom: 2px; width: 100%; text-align: center; font-size: 9px; color: var(--dim); font-style: normal; }
+  button, select { font: inherit; font-size: 13px; background: #112624; color: var(--fg); border: 1px solid #28514e; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--acc); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  #midilog { margin: 8px 0 0; height: 150px; overflow: hidden; color: var(--dim); font-size: 12px; white-space: pre; }
+  input[type=range] { accent-color: var(--acc); }
+</style>
+</head>
+<body>
+<main>
+  <h1>FORMATION <small>emulator &middot; version <span id="ver"></span></small></h1>
+  <p class="small">The firmware's own code, compiled to WebAssembly and running in this page: the screen, the sound and the
+    MIDI are what the FM-1 makes. Click or touch the faceplate, use the mouse wheel on a knob, or the computer keyboard.
+    <a href="./">Install it on your FM-1</a> &middot; <a href="manual.html">Manual</a></p>
+
+  <div id="stage">
+    <div id="screenwrap"><canvas id="lcd" width="240" height="240"></canvas></div>
+    <div id="panel">
+      <section><h2>Knobs (mouse wheel, drag up and down, or - +)</h2><div id="knobs"></div></section>
+      <section><h2>Buttons</h2><div id="buttons"></div></section>
+      <section>
+        <h2>Keys</h2>
+        <div id="keys"><div id="blackrow"></div><div id="whiterow"></div></div>
+        <p class="small" style="margin:8px 0 0">Computer keyboard: lower row <b>Z X C V B N M , . /</b> and <b>A S D F G H</b> are the 16 lower keys;
+          <b>1 to 8</b> the step keys, <b>9</b> and <b>0</b> scene A and B, <b>-</b> mute; <b>Space</b> PLAY.</p>
+      </section>
+      <section>
+        <h2>Sound, MIDI, tools</h2>
+        <div class="row">
+          <button id="snd">Sound on</button>
+          <label class="small">volume <input type="range" id="vol" min="0" max="100" value="70"></label>
+          <button id="shot">Save screenshot</button>
+          <button id="reset">Forget saved presets</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="midibtn">Connect MIDI ports</button>
+          <label class="small">MIDI out to <select id="mout"><option value="">(only the log below)</option></select></label>
+          <label class="small">MIDI in from <select id="min"><option value="">(none)</option></select></label>
+        </div>
+        <pre id="midilog">MIDI out of the FM-1 appears here.</pre>
+      </section>
+    </div>
+  </div>
+</main>
+
+<script>
+const WASM_B64 = "/*WASM*/";
+const VERSION = "/*VER*/";
+const $ = (id) => document.getElementById(id);
+const b64d = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const b64e = (u) => { let s = ""; for (let i = 0; i < u.length; i += 4096) s += String.fromCharCode.apply(null, u.subarray(i, i + 4096)); return btoa(s); };
+
+async function boot() {
+  $("ver").textContent = VERSION;
+  if (WASM_B64.startsWith("/*")) { document.body.insertAdjacentHTML("afterbegin", "<p style='color:#f88'>No firmware inside this page (build it with tools/make_site.py).</p>"); return; }
+  const { instance } = await WebAssembly.instantiate(b64d(WASM_B64), {});
+  const E = instance.exports, mem = () => E.memory.buffer;
+  window.__emu = E;                                             // (for tests)
+
+  /* what the FM-1 keeps lives in localStorage: put it back before the firmware starts */
+  const KEY = "formation-emulator-v1";
+  let saved = "";
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY) || "null");
+    if (s) {
+      new Uint8Array(mem(), E.emu_store(), 260).set(b64d(s.store));
+      new Uint8Array(mem(), E.emu_pre(), 4096).set(b64d(s.pre));
+      if (s.preOk) E.emu_pre_ok(1);
+      saved = localStorage.getItem(KEY);
+    }
+  } catch (e) { /* a broken save: start fresh */ }
+  E.emu_init();
+  setInterval(() => {
+    try {
+      const s = JSON.stringify({ store: b64e(new Uint8Array(mem(), E.emu_store(), 260)), pre: b64e(new Uint8Array(mem(), E.emu_pre(), 4096)), preOk: E.emu_pre_ok(0) });
+      if (s !== saved) { localStorage.setItem(KEY, s); saved = s; }
+    } catch (e) { /* storage blocked */ }
+  }, 1000);
+
+  /* ---- the screen */
+  const cv = $("lcd"), ctx = cv.getContext("2d"), img = ctx.createImageData(240, 240);
+  const drawScreen = () => {
+    const f = new Uint16Array(mem(), E.emu_fb(), 57600), d = img.data;
+    for (let i = 0, j = 0; i < 57600; i++, j += 4) {
+      const c = f[i];
+      d[j] = (((c >> 11) & 31) * 255 / 31) | 0; d[j + 1] = (((c >> 5) & 63) * 255 / 63) | 0; d[j + 2] = ((c & 31) * 255 / 31) | 0; d[j + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  };
+
+  /* ---- the faceplate */
+  const leds = [];                                              // [element, led index]
+  const press = (id, down) => E.emu_btn(id, down ? 1 : 0);
+  const KNOBS = [["SELECT", 0, "menus"], ["ALGORITHM", 1, "A-B morph"], ["KNOB 1", 2, ""], ["KNOB 2", 3, ""], ["KNOB 3", 4, ""], ["KNOB 4", 5, ""], ["PRESETS", 6, "voice"]];
+  for (const [name, id, hint] of KNOBS) {
+    const k = document.createElement("div"); k.className = "knob";
+    k.innerHTML = `<div class="dial"></div><b>${name}</b><span>${hint || "&nbsp;"}</span><div class="pm"><button>-</button><button>+</button></div>`;
+    const dial = k.firstChild; let ang = 0, acc = 0, dragY = null;
+    const turn = (n) => { E.emu_enc(id, n); ang += n * 18; dial.style.transform = `rotate(${ang}deg)`; };
+    k.addEventListener("wheel", (e) => { e.preventDefault(); acc += e.deltaY; while (acc <= -30) { turn(1); acc += 30; } while (acc >= 30) { turn(-1); acc -= 30; } }, { passive: false });
+    dial.addEventListener("pointerdown", (e) => { dragY = e.clientY; dial.setPointerCapture && dial.setPointerCapture(e.pointerId); });
+    dial.addEventListener("pointermove", (e) => { if (dragY === null) return; while (dragY - e.clientY >= 8) { turn(1); dragY -= 8; } while (e.clientY - dragY >= 8) { turn(-1); dragY += 8; } });
+    const end = () => { dragY = null; };
+    dial.addEventListener("pointerup", end); dial.addEventListener("pointercancel", end);
+    const [minus, plus] = k.querySelectorAll("button");
+    minus.addEventListener("click", () => turn(-1)); plus.addEventListener("click", () => turn(1));
+    $("knobs").appendChild(k);
+  }
+  const BTN = ["OCT-", "OCT+", "FX", "SEL", "ENV", "LFO", "EDIT", "GLO", "HOME", "SAVE", "ARP", "SEQ", "PLAY", "REC"];
+  BTN.forEach((name, id) => {
+    const b = document.createElement("div"); b.className = "btn"; b.innerHTML = `<i class="led"></i>${name}`;
+    b.addEventListener("pointerdown", (e) => { e.preventDefault(); b.setPointerCapture && b.setPointerCapture(e.pointerId); press(id, true); });
+    const up = () => press(id, false);
+    b.addEventListener("pointerup", up); b.addEventListener("pointercancel", up);
+    $("buttons").appendChild(b); leds.push([b, id]);
+  });
+  const WHITE = [0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26], BLACK = [1, 3, 5, 8, 10, 13, 15, 17, 20, 22, 25];
+  const keyEl = (k, label) => {
+    const e = document.createElement("div"); e.className = "key"; e.innerHTML = `<i class="led"></i><i>${label}</i>`;
+    e.addEventListener("pointerdown", (ev) => { ev.preventDefault(); e.setPointerCapture && e.setPointerCapture(ev.pointerId); E.emu_key(k, 1); });
+    const up = () => E.emu_key(k, 0);
+    e.addEventListener("pointerup", up); e.addEventListener("pointercancel", up);
+    leds.push([e, 14 + k]);
+    return e;
+  };
+  WHITE.forEach((k, i) => $("whiterow").appendChild(keyEl(k, String(i + 1))));
+  const BLABEL = ["1", "2", "3", "4", "5", "6", "7", "8", "A", "B", "M"];
+  BLACK.forEach((k, i) => {
+    const e = keyEl(k, BLABEL[i]), wi = WHITE.indexOf(k - 1);
+    e.style.left = ((wi + 1) / 16 * 100) + "%";
+    $("blackrow").appendChild(e);
+  });
+
+  /* the computer keyboard */
+  const KEYMAP = {};
+  ["KeyZ", "KeyX", "KeyC", "KeyV", "KeyB", "KeyN", "KeyM", "Comma", "Period", "Slash", "KeyA", "KeyS", "KeyD", "KeyF", "KeyG", "KeyH"].forEach((c, i) => { KEYMAP[c] = ["key", WHITE[i]]; });
+  ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9", "Digit0", "Minus"].forEach((c, i) => { KEYMAP[c] = ["key", BLACK[i]]; });
+  KEYMAP.Space = ["btn", 12];
+  const kb = (down) => (e) => {
+    if (e.target && /^(INPUT|SELECT|BUTTON)$/.test(e.target.tagName) && e.code === "Space") return;
+    const m = KEYMAP[e.code]; if (!m || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    if (m[0] === "key") E.emu_key(m[1], down ? 1 : 0); else press(m[1], down);
+  };
+  addEventListener("keydown", kb(true)); addEventListener("keyup", kb(false));
+
+  const ledView = () => new Uint8Array(mem(), E.emu_led(), 48);
+  const updateLeds = () => { const l = ledView(); for (const [el, i] of leds) { const on = l[i] ? 1 : 0; if (el._on !== on) { el._on = on; el.classList.toggle("on", !!on); } } };
+
+  /* ---- MIDI out of the FM-1: the log, and a real port if you connect one */
+  const NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  const lines = []; let midiOut = null;
+  const pumpMidi = () => {
+    let any = false;
+    while (E.emu_midi_pop()) {
+      const t = new Uint8Array(mem(), E.emu_midi_tmp(), 3), st = t[0], d1 = t[1], d2 = t[2], ty = st & 0xF0, ch = (st & 15) + 1;
+      if (midiOut) { try { midiOut.send([st, d1, d2]); } catch (e) { /* port gone */ } }
+      const nm = NAMES[d1 % 12] + (Math.floor(d1 / 12) - 1);
+      lines.push(ty === 0x90 && d2 ? `ch ${ch}  note on   ${nm.padEnd(4)} vel ${d2}` : (ty === 0x80 || ty === 0x90) ? `ch ${ch}  note off  ${nm}` : `ch ${ch}  ${st.toString(16)} ${d1} ${d2}`);
+      if (lines.length > 10) lines.shift();
+      any = true;
+    }
+    if (any) $("midilog").textContent = lines.slice().reverse().join("\n");
+  };
+  let access = null;
+  $("midibtn").addEventListener("click", async () => {
+    if (!navigator.requestMIDIAccess) { alert("This browser has no Web MIDI. Use Chrome or Edge."); return; }
+    try { access = await navigator.requestMIDIAccess(); } catch (e) { alert("MIDI access was not allowed."); return; }
+    const fill = (sel, ports, none) => { sel.textContent = ""; sel.add(new Option(none, "")); for (const p of ports.values()) sel.add(new Option(p.name, p.id)); };
+    fill($("mout"), access.outputs, "(only the log below)"); fill($("min"), access.inputs, "(none)");
+    $("midibtn").textContent = "MIDI ports connected";
+  });
+  $("mout").addEventListener("change", () => { midiOut = access && $("mout").value ? access.outputs.get($("mout").value) : null; });
+  $("min").addEventListener("change", () => {
+    if (!access) return;
+    for (const p of access.inputs.values()) p.onmidimessage = null;
+    const p = $("min").value && access.inputs.get($("min").value);
+    if (p) p.onmidimessage = (m) => { const d = m.data; if (d.length >= 2 && d[0] < 0xF0) E.emu_midi_in(d[0], d[1], d[2] || 0); };
+  });
+
+  /* ---- time: the firmware's clock follows the sound when it is on, the page otherwise */
+  let audio = null, last = performance.now(), msFrac = 0;
+  const frame = (now) => {
+    if (!audio) {
+      msFrac += Math.min(now - last, 100);
+      const ms = Math.floor(msFrac); msFrac -= ms;
+      if (ms) E.emu_step(ms);
+    }
+    last = now;
+    pumpMidi(); drawScreen(); updateLeds();
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+
+  $("vol").addEventListener("input", () => { if (audio) audio.gain.gain.value = $("vol").value / 100; });
+  $("snd").addEventListener("click", async () => {
+    if (audio) { audio.node.disconnect(); audio.ctx.close(); audio = null; $("snd").textContent = "Sound on"; return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) { alert("This browser has no Web Audio."); return; }
+    const ctx = new AC({ sampleRate: 44100 }), node = ctx.createScriptProcessor(1024, 0, 2), gain = ctx.createGain();
+    gain.gain.value = $("vol").value / 100;
+    const QN = 16384, qL = new Float32Array(QN), qR = new Float32Array(QN); let w = 0, r = 0, acc = 0;
+    const step = 44100 / ctx.sampleRate;                         // source frames per output frame
+    const block = () => {                                        // one block of the firmware: 256 frames, 5.8 ms
+      acc += 256000 / 44100; const ms = Math.floor(acc); acc -= ms;
+      if (ms) E.emu_step(ms);
+      const a = new Int32Array(mem(), E.emu_audio(), 512);
+      for (let i = 0; i < 256; i++) { qL[w % QN] = Math.max(-1, Math.min(1, a[2 * i] / 32768)); qR[w % QN] = Math.max(-1, Math.min(1, a[2 * i + 1] / 32768)); w++; }
+    };
+    node.onaudioprocess = (e) => {
+      const L = e.outputBuffer.getChannelData(0), R = e.outputBuffer.getChannelData(1);
+      while (w - r < L.length * step + 2) block();
+      for (let i = 0; i < L.length; i++) {
+        const i0 = Math.floor(r), f = r - i0;
+        L[i] = qL[i0 % QN] * (1 - f) + qL[(i0 + 1) % QN] * f; R[i] = qR[i0 % QN] * (1 - f) + qR[(i0 + 1) % QN] * f;
+        r += step;
+      }
+    };
+    node.connect(gain); gain.connect(ctx.destination);
+    await ctx.resume();
+    audio = { ctx, node, gain };
+    $("snd").textContent = "Sound off";
+  });
+
+  $("shot").addEventListener("click", () => {
+    drawScreen();
+    const o = document.createElement("canvas"); o.width = o.height = 480;
+    const c = o.getContext("2d"); c.imageSmoothingEnabled = false; c.drawImage(cv, 0, 0, 480, 480);
+    o.toBlob((b) => { const a = document.createElement("a"); a.href = URL.createObjectURL(b); a.download = "formation-screen.png"; a.click(); });
+  });
+  $("reset").addEventListener("click", () => { try { localStorage.removeItem(KEY); } catch (e) { /* nothing to forget */ } location.reload(); });
+}
+boot();
+</script>
+</body>
+</html>
