@@ -1,4 +1,4 @@
-# Build Formation on GitHub, publish the .fwsc as a release and the web installer (GitHub Pages).
+# Build Formation on GitHub, attach the .fwsc to a release and publish the web installer (GitHub Pages).
 #   - push a tag `v1.0` (X.Y, one digit each), or
 #   - run it by hand: Actions > release > Run workflow (give a version).
 # One-time setup: Settings > Pages > Source: "GitHub Actions".
@@ -37,6 +37,12 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
       - name: Host-mode test (the arp and the screens run on this computer)
         run: sh tests/run_host.sh tests/full.txt > host.log && tail -3 host.log
+      - name: Browser emulator (the firmware compiled to WebAssembly, then tested in Node)
+        continue-on-error: true
+        run: |
+          pip install ziglang
+          python3 tools/build_emu.py "${{ steps.v.outputs.version }}"
+          node tests/emu_test.mjs build/emu.wasm build/emu || { rm -f build/emu.wasm; exit 1; }
       - name: JieLi toolchain (Linux, from JieLi)
         run: sh tools/get_toolchain.sh
       - name: JieLi AC79 SDK (three files go into the package; Apache-2.0)
@@ -49,12 +55,10 @@ jobs:
         with:
           name: formation-${{ steps.v.outputs.version }}
           path: build/formation-${{ steps.v.outputs.version }}.fwsc
-      - name: Publish a release with the package
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.v.outputs.version }}
-          target_commitish: ${{ github.sha }}
-          name: Formation ${{ steps.v.outputs.version }}
           files: build/formation-${{ steps.v.outputs.version }}.fwsc
           generate_release_notes: true
       - uses: actions/upload-pages-artifact@v3
