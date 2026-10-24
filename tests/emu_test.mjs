@@ -9,6 +9,7 @@ const check = (c, m) => { console.log((c ? "ok   " : "FAIL ") + m); if (!c) ok =
 
 e.emu_init();
 e.emu_step(1300);
+{ const t0 = Date.now(); e.emu_step(0xFFFFFFFF); check(Date.now() - t0 < 8000, "a huge (or negative) step cannot hang it"); }
 const fb = () => new Uint16Array(e.memory.buffer, e.emu_fb(), 240 * 240);
 const shot = (name) => {                       // RGB565 -> PPM
   const f = fb(), b = Buffer.alloc(240 * 240 * 3 + 16);

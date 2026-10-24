@@ -105,6 +105,7 @@ static int32_t audio_blk[2u * HALF_FRAMES];
 EXPORT("emu_init") void emu_init(void) { app_init(); }
 EXPORT("emu_step") void emu_step(uint32_t ms)   /* ms milliseconds go by; the main loop runs a few times in each */
 {
+    if (ms > 1000u) ms = 1000u;                  /* (a negative number from the page is a huge one here: never hang) */
     while (ms--) {
         uint32_t i;
         fm1_ms++;
