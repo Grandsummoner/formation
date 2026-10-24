@@ -13,14 +13,16 @@ updater, or go back to the official firmware through the [FM-1 Firmware Hub](htt
 ## Get it built and published (GitHub does everything)
 
 1. Make a GitHub repository and push this tree to it.
-2. In the repository: **Settings > Pages > Source: GitHub Actions**.
-3. Make a release: push a tag, e.g. `git tag v1.0 && git push --tags`, or **Actions > release > Run workflow**.
-   The version is `X.Y`, one digit each; the minor digit becomes the package identity `FM-1_96Y`.
-4. The workflow runs the host test, downloads JieLi's Linux compiler and the AC79 SDK, builds `formation-X.Y.fwsc`,
-   attaches it to the release and publishes the installer and the manual to your Pages site.
+2. In the repository: **Settings > Pages > Source: GitHub Actions** (once).
+3. That is all. **Every push to `main` builds and publishes**, in about two minutes:
+   * the web installer, the browser emulator and the manual on your Pages site,
+   * `formation-X.Y.fwsc` on the release called **latest**
+     (`https://github.com/<you>/<repo>/releases/download/latest/formation-X.Y.fwsc`).
+   The version is the first line of the file `VERSION` (`X.Y`, one digit each; the minor digit becomes the package
+   identity `FM-1_96Y`). Push a tag such as `v1.1` for a numbered release. A build that fails publishes nothing.
 
-If the build step fails, open the failed run's log and send it to whoever helps you: the host test runs first and tells
-you whether the problem is in the code or in the toolchain.
+If a build fails, open the failed run in the Actions tab and send the log of the failed step. The host test runs first and
+tells you whether the problem is in the code or in the toolchain.
 
 ## Try it in a browser (emulator)
 
