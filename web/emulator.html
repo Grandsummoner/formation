@@ -226,11 +226,12 @@ async function boot() {
 
   /* ---- time: the firmware's clock follows the sound when it is on, the page otherwise */
   let audio = null, last = performance.now(), msFrac = 0;
-  const frame = (now) => {
+  const frame = () => {
+    const now = performance.now();                               // (not the frame's own timestamp: it can be earlier than `last`)
     if (!audio) {
-      msFrac += Math.min(now - last, 100);
+      msFrac += Math.max(0, Math.min(now - last, 100));          // never a negative or huge step
       const ms = Math.floor(msFrac); msFrac -= ms;
-      if (ms) E.emu_step(ms);
+      if (ms > 0) E.emu_step(ms);
     }
     last = now;
     pumpMidi(); drawScreen(); updateLeds();
