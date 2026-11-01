@@ -95,6 +95,14 @@ static void midi_send(uint32_t st, uint32_t d1, uint32_t d2)
     if (mo_w - mo_r > 256u) mo_r = mo_w - 256u;
 }
 
+/* Bluetooth LE MIDI: there is no radio in a browser. The stand-in keeps only the switch (ON shows as advertising),
+ * so the SYSTEM menu's BLUETOOTH row can be tried; the real one is firmware/src/ble/fm_ble.c */
+static uint8_t bt_sw;
+static void bt_init(const uint8_t rec[BT_KEPT]) { (void)rec; bt_sw = 0; }
+static void bt_set(uint32_t on) { bt_sw = on ? 1u : 0u; }
+static uint32_t bt_state(void) { return bt_sw ? BT_ADV : BT_OFF; }
+static int bt_kept(uint8_t rec[BT_KEPT]) { (void)rec; return 0; }
+
 static void app_audio(int32_t *out, uint32_t n);
 static void app_main(void);
 static void app_init(void);

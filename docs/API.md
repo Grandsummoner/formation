@@ -148,10 +148,27 @@ USB-MIDI, class compliant, cable 0.
 | | |
 | --- | --- |
 | `midi_get(&status, &d1, &d2)` | 1 and the next message received, or 0. Call it from the main loop until 0 |
-| `midi_send(status, d1, d2)` | send one message (from the main loop only) |
+| `midi_send(status, d1, d2)` | send one message (from the main loop only); with Bluetooth on it goes out over BLE-MIDI as well (see below) |
 
 `status` includes the channel: `0x90` note on channel 1, `0x93` channel 4; a note on with velocity 0 is a
 note off. SysEx is the platform's (the updater): it does not reach the app.
+
+### Bluetooth LE MIDI
+
+BLE-MIDI is a second port beside USB's (`src/ble/`, [README](../firmware/src/ble/README.md)). It is off at every
+power-on; the app switches it. Nothing else changes for the app: `midi_send` reaches both ports, and what a Bluetooth
+device sends arrives through `midi_get`, mixed with USB's.
+
+| | |
+| --- | --- |
+| `bt_init(rec)` | once, after the settings are read; `rec` is the `BT_KEPT` (112) bytes the app keeps in them |
+| `bt_set(on)` | BLUETOOTH on or off, from the main loop. The first `on` starts the radio, which takes a moment |
+| `bt_state()` | `BT_OFF`, `BT_NOCAL` (on, but the radio's factory values are missing: it never starts), `BT_ADV` (advertising), `BT_LINK` / `BT_READY` (a device is connected / and listening) |
+| `bt_kept(rec)` | 1 when `rec` changed (the radio's address and values copy, after its first start): save it with the settings |
+
+The radio's factory values are read from stock's store at flash `0xE8000`, which the flash guard (`FL_RANGE_OK`)
+refuses to write. The BLE interrupts attach in `fm1_cstart` before `fm1_guard_lock_top()`; after that the vector
+table is write-locked. In `tests/host.c` and `tests/web.c` there is no radio: `bt_*` only keep the switch.
 
 ## Settings
 

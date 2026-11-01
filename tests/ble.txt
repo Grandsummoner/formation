@@ -1,0 +1,16 @@
+# Formation host test: the SYSTEM menu's BLUETOOTH row (the host stand-in keeps only the switch).
+# T keys MASK | btn ID | btnup ID | enc ID N | midi ST D1 D2 | shot | end        (encoders: 0 SELECT, 2..5 KNOB1..4)
+1500 enc 0 1
+1600 enc 0 1
+1700 enc 0 1
+2000 shot
+# knob 4 right: BLUETOOTH ON (the row reads ON), left: OFF
+2200 enc 5 1
+2600 shot
+3000 enc 5 -1
+3400 shot
+# on again, back to the performance screen: no connection, so no BT mark
+3600 enc 5 1
+3800 enc 0 -3
+6500 shot
+7000 end

@@ -87,6 +87,18 @@ static int midi_get(uint8_t *st, uint8_t *d1, uint8_t *d2)
 }
 static void midi_send(uint32_t st, uint32_t d1, uint32_t d2) { printf("%6u ms  MIDI out %02X %u %u\n", fm1_ms, st, d1, d2); }
 
+/* Bluetooth LE MIDI: there is no radio here. The stand-in keeps only the switch (ON shows as advertising), so the
+ * SYSTEM menu's BLUETOOTH row and the screens can be tested; the real one is firmware/src/ble/fm_ble.c */
+static uint8_t bt_sw;
+static void bt_init(const uint8_t rec[BT_KEPT]) { (void)rec; bt_sw = 0; }
+static void bt_set(uint32_t on) { if ((on ? 1u : 0u) != bt_sw) printf("%6u ms  BLUETOOTH %s\n", fm1_ms, on ? "ON" : "OFF"); bt_sw = on ? 1u : 0u; }
+#ifdef HOST_BT_LINK                             /* cc -DHOST_BT_LINK: ON shows as a connected central (the footer's BT mark) */
+static uint32_t bt_state(void) { return bt_sw ? BT_READY : BT_OFF; }
+#else
+static uint32_t bt_state(void) { return bt_sw ? BT_ADV : BT_OFF; }
+#endif
+static int bt_kept(uint8_t rec[BT_KEPT]) { (void)rec; return 0; }
+
 static void app_audio(int32_t *out, uint32_t n);
 static void app_main(void);
 

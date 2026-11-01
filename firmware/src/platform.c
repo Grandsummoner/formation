@@ -6,6 +6,7 @@
  *   USB rescue          OCT- held at power-on: no audio, only the updater (the web installer still works)
  *   updater             the M-UPGRADE SysEx path: the web installer / the hub can always reach the FM-1
  *   USB-MIDI            in and out (midi_get, midi_send)
+ *   BLE-MIDI            out beside USB's, in into the same ring; off at power-on (bt_set, bt_state; ble/fm_ble.c)
  *   USB audio           the output as a class-compliant 16-bit stereo input, 44.1 or 48 kHz
  *   keys, knobs, LEDs   fm1_in.notes / buttons, fm1_input_edges, fm1_enc_take, fm1_led_key (hal/fm1_input.h)
  *   screen              240 x 240, lcd_fill, draw_text_box with FONT_S (16 px) / FONT_L (32 px) (gfx.c)
@@ -22,6 +23,15 @@ enum { BTN_OCT_DOWN = 0, BTN_OCT_UP = 1, BTN_FX = 2, BTN_SEL = 3, BTN_ENV = 4, B
        BTN_GLO = 7, BTN_HOME = 8, BTN_SAVE = 9, BTN_ARP = 10, BTN_SEQ = 11, BTN_PLAY = 12, BTN_REC = 13 };
 enum { ENC_SELECT = 0, ENC_ALGORITHM = 1, ENC_KNOB1 = 2, ENC_KNOB2 = 3, ENC_KNOB3 = 4, ENC_KNOB4 = 5, ENC_PRESETS = 6 };
 #define KEY_LED(k) (14u + (k))
+
+/* Bluetooth LE MIDI (firmware/src/ble/fm_ble.c on the FM-1; stand-ins in tests/host.c and tests/web.c):
+ *   bt_init(rec)   once, after the settings are read: rec is the record kept in them (BT_KEPT bytes)
+ *   bt_set(on)     BLUETOOTH on / off, from the main loop (the first ON starts the radio)
+ *   bt_state()     BT_OFF, BT_NOCAL (on, but the radio's trims are missing: it never starts), BT_ADV (advertising),
+ *                  BT_LINK / BT_READY (a central is connected / and listening to the MIDI)
+ *   bt_kept(rec)   1 when rec changed and should be saved with the settings */
+#define BT_KEPT 112u
+enum { BT_OFF = 0, BT_NOCAL = 1, BT_ADV = 3, BT_LINK = 4, BT_READY = 5 };
 
 #ifdef DINGHY_WEB
 #include "../../tests/web.c"                   /* in a browser: a fake FM-1 as WebAssembly (tests/web.c, web/emulator.html) */
@@ -66,11 +76,18 @@ static volatile uint32_t fm1_ms;                /* milliseconds since power-on (
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 1
 #define FELUCCA_UART 0
+/* BLE-MIDI: usb.c's midi_out_event (where every MIDI packet the app sends passes) calls bt_out(), the 2 kHz part of
+ * TIMER5's tick calls bt_poll() (both in ble/fm_ble.c, included below) */
+static void bt_out(uint32_t pkt);
+static void bt_poll(void);
+#define APP_MIDI_OUT(pkt) bt_out(pkt)
+#define APP_T5_POLL() bt_poll()
 #include "usb.c"
 
 /* ---- flash: read anywhere; erase / program only the update's staging area and the settings sector */
 #define SETTINGS_AT 0x000FC000u                 /* one 4 KiB sector of Felucca's globals area */
 #define PRESETS_AT 0x000FD000u                  /* Formation: a second sector, the 16 preset slots */
+/* nothing else may be written: in particular not stock's VM (0xE7000-0xE9FFF), where the BLE radio's factory values are */
 #define FL_RANGE_OK(off, n) (FL_IN(off, n, FL_OTA_LO, FL_OTA_HI) || FL_IN(off, n, SETTINGS_AT, SETTINGS_AT + 0x2000u))
 #include "fm1_flash.h"
 static uint8_t flash_ok;
@@ -89,6 +106,8 @@ static int st_read(uint32_t off, void *dst, uint32_t n)
     }
     return 0;
 }
+
+#include "ble/fm_ble.c"                         /* BLE-MIDI: Optimist's stack and fm1-dock's glue (needs st_read, usb.c's rings) */
 
 static uint8_t recovery_active;
 #define OTA_IDENTITY (recovery_active ? "FM-1_000" : FELUCCA_ID)
@@ -215,8 +234,10 @@ void fm1_timer5_irq(void)
             uac_service();
         return;
     }
-    if (owed)
+    if (owed) {
         usb_poll();
+        APP_T5_POLL();                          /* BLE-MIDI in -> usb.c's ring */
+    }
     owed = 0;
 }
 extern void isr_timer5(void);
@@ -338,6 +359,7 @@ void fm1_cstart(void)
     fm1_audio_init(abuf, HALF_WORDS, isr_alnk0, 3);   /* (abuf is zero: .bss) */
     usb_start();
     fm1_timer5_start(isr_timer5, 4);
+    bt_attach();                                /* the two BLE vectors (masked), while the vector table is open */
     fm1_guard_lock_top();
     fm1_irq_enable_all();
     app_main();

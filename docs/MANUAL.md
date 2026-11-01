@@ -79,8 +79,20 @@ Knob 1 picks the action (copy A to B, copy B to A, init the edited scene, init e
 
 ### SYSTEM menu
 
-Theme (NAVY, MONOCHROME, MATRIX), the MIDI channels of scene A and B, and the DSP load: how much of the audio time the
-sound takes. Keep it under about 50 %; if it is higher, use fewer chords or the lighter voices.
+Theme (NAVY, MONOCHROME, MATRIX), the MIDI channels of scene A and B, BLUETOOTH, and the DSP load: how much of the
+audio time the sound takes. Keep it under about 50 %; if it is higher, use fewer chords or the lighter voices.
+
+**BLUETOOTH** (knob 4: right is on, left is off) sends everything Formation sends over USB over Bluetooth LE MIDI as
+well, and takes MIDI notes in from a connected device like USB's. It is **off at every power-on**. Switched on, the FM-1
+advertises as `Formation XXXX`; connect to it from a computer, a tablet or a Bluetooth MIDI adapter that acts as the host
+(no pairing is asked). The row reads ON while it waits and CONNECTED once a device is connected and listening; the
+performance screen shows BT beside the theme while it is.
+
+* The first time it is switched on it starts the radio and keeps a copy of the radio's factory values and an address
+  in the settings. NO CAL means the radio's factory values could not be found (they come from the stock firmware's
+  store, which Formation only reads): the radio stays off, and installing the stock firmware once puts them back.
+* Starting the radio takes a moment, so switch Bluetooth on before you play, not during.
+* Bluetooth uses some of the chip's time. Watch DSP LOAD with a device connected.
 
 ## Notes on what differs from the plugin
 
@@ -88,6 +100,6 @@ sound takes. Keep it under about 50 %; if it is higher, use fewer chords or the 
 * **Legato** sets the note length here (10 % to 95 % of a step); in the plugin it reduces the rests.
 * The plugin's Rate and Octaves LFOs are not here (six LFOs: Morph, Rest, Legato, Entropy, Harmony, Chaos).
 * Chords come from the scale, as in the plugin; the held notes are the arp's pool.
-* USB MIDI notes (any channel) are accepted like keys. The firmware does not send MIDI clock yet.
+* USB and Bluetooth MIDI notes (any channel) are accepted like keys. The firmware does not send MIDI clock yet.
 * Presets are kept in their own flash sector, your working state is saved by itself when the sound is quiet.
 * No reverb; one delay (a dotted eighth), fed by each scene's send.

@@ -698,6 +698,7 @@ static void draw_foot(void)
     p = p_sig(p, cur.oct);
     p = p_str(p, "  ");
     p = p_str(p, THEME[glob.theme % 3u].name);
+    if (bt_state() >= BT_LINK) p = p_str(p, "  BT");         /* a Bluetooth central is connected */
     *p = 0;
     draw_text_box(8, 204, 224, &FONT_S, s, pal[1], 0);
     p = s;
@@ -910,7 +911,13 @@ static uint32_t view_row(uint32_t i, row_t *r)  /* 0: no such row */
         if (i == 0) { setrow(r, "THEME", -1, 0); setval_s(r, THEME[glob.theme % 3u].name); return 1; }
         if (i == 1) { setrow(r, "OUT A CH", -1, 0); setval_n(r, (uint32_t)glob.ch[0] + 1u); return 1; }
         if (i == 2) { setrow(r, "OUT B CH", -1, 0); setval_n(r, (uint32_t)glob.ch[1] + 1u); return 1; }
-        if (i == 3) { char *p; setrow(r, "DSP LOAD", (int16_t)clampi((int32_t)dsp_pct * 255 / 100, 0, 255), 0); p = p_num(r->value, dsp_pct); *p++ = '%'; *p = 0; return 1; }
+        if (i == 3) {                           /* knob 4: BLUETOOTH, off at every power-on */
+            uint32_t b = bt_state();
+            setrow(r, "BLUETOOTH", -1, 0);
+            setval_s(r, b == BT_OFF ? "OFF" : b == BT_NOCAL ? "NO CAL" : b == BT_ADV ? "ON" : "CONNECTED");
+            return 1;
+        }
+        if (i == 4) { char *p; setrow(r, "DSP LOAD", (int16_t)clampi((int32_t)dsp_pct * 255 / 100, 0, 255), 0); p = p_num(r->value, dsp_pct); *p++ = '%'; *p = 0; return 1; }
         return 0;
     default:
         return 0;
@@ -1062,6 +1069,7 @@ static void draw_tick(void)
     if (view == V_PERF || view == V_PAGE) {
         uint32_t m = sig_of(&cur.morph_pos, 1) ^ ((uint32_t)edit_sc << 8) ^ ((uint32_t)mute_mask << 12) ^ sig_of(cur.lfo_rate, 12) ^ ((uint32_t)glob.theme << 20);
         uint32_t f = sig_of(&cur.density, 2) ^ ((uint32_t)cur.oct << 16) ^ ((uint32_t)glob.theme << 24);
+        f = f * 3u + (bt_state() >= BT_LINK);
         if (view == V_PERF) {
             char hs[8];
             hs[0] = (char)(edit_sc + 1u); hs[1] = (char)(cur.mode + 1u); hs[2] = (char)(latch + 1u);
@@ -1165,7 +1173,8 @@ static void select_view(void)
     view = v;
 }
 
-typedef struct { preset_t cur; uint8_t ver, theme, ch0, ch1, slot; } saved_t;
+typedef struct { preset_t cur; uint8_t ver, theme, ch0, ch1, slot; } saved_t;     /* the record up to v1.0 (85 B) */
+typedef struct { saved_t s; uint8_t bt[BT_KEPT]; } saved2_t;                         /* + the radio's kept bytes (197 B) */
 
 static void leds(uint32_t lit_notes)
 {
@@ -1197,7 +1206,7 @@ static void leds(uint32_t lit_notes)
     fm1_led_key(KEY_LED(BLACK_KEY[10]), mute_mask != 0);
 }
 
-static saved_t sv;
+static saved2_t sv;
 
 static void app_init(void)
 {
@@ -1206,8 +1215,14 @@ static void app_init(void)
     globe_init();
     rng_s ^= fm1_ticks();
     if (!rng_s) rng_s = 1;
-    if (settings_load(&sv, sizeof sv) == 0 && sv.ver == 1u) {
-        cur = sv.cur; glob.theme = sv.theme % 3u; glob.ch[0] = sv.ch0 & 15u; glob.ch[1] = sv.ch1 & 15u; glob.slot = sv.slot & 15u;
+    memset(&sv, 0, sizeof sv);
+    if (settings_load(&sv, sizeof sv) != 0) {                   /* (an older record: the same, without the radio's bytes) */
+        memset(&sv, 0, sizeof sv);
+        if (settings_load(&sv.s, sizeof sv.s) != 0) sv.s.ver = 0;
+    }
+    bt_init(sv.bt);
+    if (sv.s.ver == 1u) {
+        cur = sv.s.cur; glob.theme = sv.s.theme % 3u; glob.ch[0] = sv.s.ch0 & 15u; glob.ch[1] = sv.s.ch1 & 15u; glob.slot = sv.s.slot & 15u;
         cur.bpm = (uint8_t)clampi(cur.bpm, 40, 240);
         cur.div &= 3u; cur.scale %= 10u; cur.root %= 12u; cur.oct = (int8_t)clampi(cur.oct, -3, 3);
         cur.tr = (int8_t)clampi(cur.tr, -12, 12);
@@ -1394,6 +1409,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
                 if (e2) { theme_set((uint32_t)((int32_t)glob.theme + 3 + (e2 > 0 ? 1 : -1)) % 3u); view_drawn = 255; }
                 if (e3) glob.ch[0] = (uint8_t)clampi((int32_t)glob.ch[0] + (e3 > 0 ? 1 : -1), 0, 15);
                 if (e4) glob.ch[1] = (uint8_t)clampi((int32_t)glob.ch[1] + (e4 > 0 ? 1 : -1), 0, 15);
+                if (e5) bt_set(e5 > 0 ? 1u : 0u);                  /* turn right: ON, left: OFF */
             }
         } else {
             const half_t *h = &HALF[cur_half >= 0 ? cur_half : 1];            /* the performance screen turns the RHYTHM cells */
@@ -1430,8 +1446,9 @@ static void app_step(void)                      /* one pass of the main loop (a 
     if (fm1_ms - t_ui >= 12u) { t_ui = fm1_ms; leds(lit); }
     draw_tick();
 
+    if (bt_kept(sv.bt)) { dirty = 1; t_change = fm1_ms; }                       /* the radio's address and trims copy: saved with the settings */
     if (dirty && !busy && fm1_ms - t_change > 2000u) {                          /* save when silent: an erase stalls the sound */
-        sv.cur = cur; sv.ver = 1; sv.theme = glob.theme; sv.ch0 = glob.ch[0]; sv.ch1 = glob.ch[1]; sv.slot = glob.slot;
+        sv.s.cur = cur; sv.s.ver = 1; sv.s.theme = glob.theme; sv.s.ch0 = glob.ch[0]; sv.s.ch1 = glob.ch[1]; sv.s.slot = glob.slot;
         settings_save(&sv, sizeof sv);
         dirty = 0;
     }
