@@ -15,6 +15,11 @@
  *        them as it reads USB's. A central's held notes are ended with note-offs when it goes.
  *   OFF  (the default at every power-on) the radio is never started: no BLE / RF register is written, and the two
  *        interrupts stay masked.
+ *   pair the link must be paired: LE legacy pairing, Just Works (no passkey: the FM-1 has no keyboard or display for
+ *        one), then encrypted; the MIDI service refuses a central that has not (BLE_MIDI_NEED_ENC), and the FM-1 asks
+ *        for it at the start of every connection (BLE_SMP_SEC_REQ), as stock does. Some centrals (Windows, MIDI
+ *        adapters) do not connect without it; a Mac or an iPhone pairs when asked. One bonded central is kept across
+ *        power-offs, in the settings (bt_rec[BT_BOND_AT ..]): pairing another replaces it.
  *   keep the radio's factory trims come from stock's VM (flash 0xE8000, read, never written) and a copy is kept in
  *        the settings (bt_kept), together with a random static address made once, so that a computer finds the
  *        same device after a power-off. Without trims the radio is never started (state BT_NOCAL).
@@ -24,17 +29,23 @@
 
 #define BLE_API static
 #define BLE_DEVICE_NAME "Formation"            /* advertised as "Formation XXXX" (XXXX: the end of the address) */
+#define FELUCCA_BLE_BOND 1                     /* pairing as the responder: LE legacy, Just Works, LL encryption */
+#define BLE_SMP_SEC_REQ 1                      /* a Security Request at the start of every connection */
+#define BLE_MIDI_NEED_ENC 1                    /* MIDI only on an encrypted (paired) link */
 #include "ble_stack.c"
 #include "ble_vm.c"
 
 #define BT_QN 64u
 #define BT_ADDR_KEPT 0xA5u                      /* bt_rec[6]: bt_rec[0..5] is the address */
+#define BT_BOND_AT 112u                         /* bt_rec[BT_BOND_AT ..]: the bonded central's key, 28 bytes (as Optimist keeps it): */
+#define BT_BOND_KEPT 0xB5u                      /*   [0] marks it; EDIV [2..3], Rand [4..11], LTK [12..27], least significant first */
 
 static uint32_t bt_in_q[BT_QN], bt_out_q[BT_QN], bt_out_ms[BT_QN];
 static volatile uint32_t bt_in_w, bt_in_r, bt_out_w, bt_out_r;
 static volatile uint8_t bt_out_on, bt_release;
 static volatile uint32_t bt_txn;                /* packets queued for a listening central (the SYSTEM row shows it) */
-static uint8_t bt_was_conn, bt_on, bt_up, bt_rf_src, bt_rec_new;
+static uint8_t bt_was_conn, bt_on, bt_up, bt_rf_src;
+static volatile uint8_t bt_rec_new;            /* bt_rec changed (the BLE interrupts set it for a new bond) */
 static uint8_t bt_held[16][16];                 /* the notes a central has on: a bit per note, per channel (TIMER5's) */
 static uint8_t bt_rec[BT_KEPT];                 /* [0..7] the address, [8..107] the radio's trims copy */
 static struct ble_rf_trims bt_use;
@@ -79,6 +90,26 @@ BLE_API void ble_app_midi_in(uint32_t pkt, uint16_t ts, uint16_t last_ts)
     bt_in_q[bt_in_w % BT_QN] = pkt;
     RING_PUBLISH();
     bt_in_w++;
+}
+
+BLE_API void ble_app_bond(const uint8_t rand[8], uint16_t ediv, const uint8_t ltk[16])   /* the BLE interrupts: a central paired */
+{
+    uint8_t *b = bt_rec + BT_BOND_AT;
+    uint32_t i;
+    b[0] = 0;                                   /* (marked again once it is whole) */
+    b[2] = (uint8_t)ediv;
+    b[3] = (uint8_t)(ediv >> 8);
+    for (i = 0; i < 8u; i++)
+        b[4 + i] = rand[i];
+    for (i = 0; i < 16u; i++)
+        b[12 + i] = ltk[i];
+    b[0] = BT_BOND_KEPT;
+    bt_rec_new = 1;                             /* saved with the settings (bt_kept) */
+}
+
+BLE_API void ble_app_peer_id(const uint8_t irk[16], const uint8_t addr[6], uint8_t addr_rand)
+{
+    (void)irk, (void)addr, (void)addr_rand;     /* the central's identity: not needed (we never use a private address) */
 }
 
 static int bt_ring_in(uint32_t pkt)             /* TIMER5: into usb.c's MIDI-in ring (what midi_get reads) -> 1 taken */
@@ -172,6 +203,9 @@ static int bt_radio_start(void)
         bt_rec_new = 1;
     }
     ble_init(a, rnd);
+    if (bt_rec[BT_BOND_AT] == BT_BOND_KEPT)     /* the bonded central finds the FM-1 bonded again after a power-off */
+        ble_host_set_key(bt_rec + BT_BOND_AT + 4, (uint16_t)(bt_rec[BT_BOND_AT + 2] | bt_rec[BT_BOND_AT + 3] << 8),
+                         bt_rec + BT_BOND_AT + 12);
     ble_rf_copy_get(bt_rec + 8, &bt_use);       /* (the VM's set: ble_rf_choose made the copy from it) */
     ble_hw_wl82_start(&bt_use);
     bt_up = 1;

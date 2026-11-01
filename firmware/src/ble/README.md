@@ -25,4 +25,11 @@ How it is wired in (`platform.c`):
 The radio's factory values (stock's VM, flash `0xE8000`) are only read. `FL_RANGE_OK` refuses to write there, and a copy
 is kept in the settings (`bt_kept`). Without them the radio never starts (BT_NOCAL).
 
-Not here: the central role (Formation does not connect out to other devices) and pairing.
+Pairing: the stack is built for pairing as the responder (LE legacy, Just Works), with a Security Request at the start
+of every connection and the MIDI service refusing an unencrypted link (`BLE_SMP_SEC_REQ`, `BLE_MIDI_NEED_ENC` in
+`fm_ble.c`). Windows and some MIDI adapters do not connect without it. The bonded central's key (28 bytes, as Optimist
+keeps it) is saved with the settings (`ble_app_bond`, restored with `ble_host_set_key`); there is one slot. To go back
+to a link that needs no pairing (Mac and iPhone connect without), drop `FELUCCA_BLE_BOND`, `BLE_SMP_SEC_REQ` and
+`BLE_MIDI_NEED_ENC` and the two bond callbacks.
+
+Not here: the central role (Formation does not connect out to other devices).

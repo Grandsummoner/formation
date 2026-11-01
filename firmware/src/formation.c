@@ -1175,7 +1175,8 @@ static void select_view(void)
 }
 
 typedef struct { preset_t cur; uint8_t ver, theme, ch0, ch1, slot; } saved_t;     /* the record up to v1.0 (85 B) */
-typedef struct { saved_t s; uint8_t bt[BT_KEPT]; } saved2_t;                         /* + the radio's kept bytes (197 B) */
+typedef struct { saved_t s; uint8_t bt[BT_KEPT]; } saved2_t;                         /* + the radio's kept bytes (225 B) */
+typedef struct { saved_t s; uint8_t bt[112]; } saved1b_t;                            /* the record of the first Bluetooth builds (197 B) */
 
 static void leds(uint32_t lit_notes)
 {
@@ -1217,9 +1218,11 @@ static void app_init(void)
     rng_s ^= fm1_ticks();
     if (!rng_s) rng_s = 1;
     memset(&sv, 0, sizeof sv);
-    if (settings_load(&sv, sizeof sv) != 0) {                   /* (an older record: the same, without the radio's bytes) */
+    if (settings_load(&sv, sizeof sv) != 0) {                   /* (an older record: without the pairing, or without the radio's bytes either) */
+        saved1b_t o;
         memset(&sv, 0, sizeof sv);
-        if (settings_load(&sv.s, sizeof sv.s) != 0) sv.s.ver = 0;
+        if (settings_load(&o, sizeof o) == 0) { sv.s = o.s; memcpy(sv.bt, o.bt, sizeof o.bt); }
+        else if (settings_load(&sv.s, sizeof sv.s) != 0) sv.s.ver = 0;
     }
     bt_init(sv.bt);
     if (sv.s.ver == 1u) {

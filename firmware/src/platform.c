@@ -31,7 +31,7 @@ enum { ENC_SELECT = 0, ENC_ALGORITHM = 1, ENC_KNOB1 = 2, ENC_KNOB2 = 3, ENC_KNOB
  *                  BT_LINK / BT_READY (a central is connected / and listening to the MIDI)
  *   bt_kept(rec)   1 when rec changed and should be saved with the settings
  *   bt_count()     packets queued for a listening central since it started listening (a diagnostic) */
-#define BT_KEPT 112u
+#define BT_KEPT 140u
 enum { BT_OFF = 0, BT_NOCAL = 1, BT_ADV = 3, BT_LINK = 4, BT_READY = 5 };
 
 #ifdef DINGHY_WEB
