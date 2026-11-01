@@ -225,6 +225,9 @@
 #ifndef BLE_MIDI_PER_EVENT
 #define BLE_MIDI_PER_EVENT 2u            /* notifications queued per connection event at most */
 #endif
+#ifndef BLE_MIDI_ONE_PER_PACKET
+#define BLE_MIDI_ONE_PER_PACKET 0        /* 1: one MIDI message per notification (Formation's: some adapters read only the first) */
+#endif
 
 #if BLE_LL_MAX_OCTETS < 27u || BLE_LL_MAX_OCTETS > 251u
 #error "BLE_LL_MAX_OCTETS: 27..251"

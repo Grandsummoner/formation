@@ -32,6 +32,9 @@
 #define FELUCCA_BLE_BOND 1                     /* pairing as the responder: LE legacy, Just Works, LL encryption */
 #define BLE_SMP_SEC_REQ 1                      /* a Security Request at the start of every connection */
 #define BLE_MIDI_NEED_ENC 1                    /* MIDI only on an encrypted (paired) link */
+#define BLE_MIDI_RUNNING_STATUS 0              /* every message with its own status byte: simple receivers do not follow running status */
+#define BLE_MIDI_ONE_PER_PACKET 1              /* one message per notification (header, timestamp, status, data): the form every receiver reads */
+#define BLE_MIDI_PER_EVENT 4u                  /* ... so up to four of them per connection event */
 #include "ble_stack.c"
 #include "ble_vm.c"
 

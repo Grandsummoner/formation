@@ -453,6 +453,9 @@ static void att_midi_out(void)
             if (!r)
                 break;
             ble_app_midi_pop();                /* (added, or not a message: dropped) */
+#if BLE_MIDI_ONE_PER_PACKET
+            break;
+#endif
         }
         len = ble_midi_enc_len(&batt.enc);
         if (!len)

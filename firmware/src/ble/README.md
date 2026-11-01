@@ -9,7 +9,10 @@ Formation's BLE-MIDI port: off at power-on, switched from the SYSTEM menu (BLUET
 | `fm_ble.c` | the glue: the queues between the stack and the app, the radio's start, the switch | fm1-dock's `hx.c` (Joakim Eriksson, GPL-3.0-only), taken out of its separate flash unit and linked into the app |
 
 The stack files are as fm1-dock has them, which is as Optimist has them except that `ble_stack.c` takes `BLE_API`
-from its includer. **Keep them that way**: to update, copy Optimist's (or fm1-dock's) newer files over them whole and
+from its includer. Formation adds one option of its own: `BLE_MIDI_ONE_PER_PACKET` (`ble_cfg.h`, a `break` in
+`ble_att.c`'s notification loop), which sends one MIDI message per notification; `fm_ble.c` turns it on, with
+`BLE_MIDI_RUNNING_STATUS 0` and `BLE_MIDI_PER_EVENT 4`, because some adapters (the M-VAVE SK7 is the suspect) do not
+read several messages in one packet or running status. **Keep them that way**: to update, copy Optimist's (or fm1-dock's) newer files over them whole and
 change `fm_ble.c` only where the stack's interface changed. Their design, the hardware facts and the provenance are
 Optimist's `docs/BLE-STACK.md` and `docs/BLE-HW-FACTS.md`.
 
