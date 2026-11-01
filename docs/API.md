@@ -165,6 +165,7 @@ device sends arrives through `midi_get`, mixed with USB's.
 | `bt_set(on)` | BLUETOOTH on or off, from the main loop. The first `on` starts the radio, which takes a moment |
 | `bt_state()` | `BT_OFF`, `BT_NOCAL` (on, but the radio's factory values are missing: it never starts), `BT_ADV` (advertising), `BT_LINK` / `BT_READY` (a device is connected / and listening) |
 | `bt_kept(rec)` | 1 when `rec` changed (the radio's address and values copy, after its first start): save it with the settings |
+| `bt_count()` | packets queued for a listening device since it started listening (a diagnostic: the SYSTEM row shows it) |
 
 The radio's factory values are read from stock's store at flash `0xE8000`, which the flash guard (`FL_RANGE_OK`)
 refuses to write. The BLE interrupts attach in `fm1_cstart` before `fm1_guard_lock_top()`; after that the vector

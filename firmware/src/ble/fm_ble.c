@@ -33,6 +33,7 @@
 static uint32_t bt_in_q[BT_QN], bt_out_q[BT_QN], bt_out_ms[BT_QN];
 static volatile uint32_t bt_in_w, bt_in_r, bt_out_w, bt_out_r;
 static volatile uint8_t bt_out_on, bt_release;
+static volatile uint32_t bt_txn;                /* packets queued for a listening central (the SYSTEM row shows it) */
 static uint8_t bt_was_conn, bt_on, bt_up, bt_rf_src, bt_rec_new;
 static uint8_t bt_held[16][16];                 /* the notes a central has on: a bit per note, per channel (TIMER5's) */
 static uint8_t bt_rec[BT_KEPT];                 /* [0..7] the address, [8..107] the radio's trims copy */
@@ -42,8 +43,10 @@ BLE_API void ble_app_state(void)                /* the BLE interrupts, or the ma
 {
     uint8_t c = (uint8_t)ble_connected();
     bt_out_on = (uint8_t)ble_midi_ready();
-    if (!bt_out_on)
+    if (!bt_out_on) {
         bt_out_r = bt_out_w;                    /* nothing waits for a central that does not listen */
+        bt_txn = 0;
+    }
     if (bt_was_conn && !c)
         bt_release = 1;
     bt_was_conn = c;
@@ -135,6 +138,12 @@ static void bt_out(uint32_t pkt)                /* usb.c midi_out_event (platfor
     bt_out_ms[bt_out_w % BT_QN] = fm1_ms;
     RING_PUBLISH();
     bt_out_w++;
+    bt_txn++;
+}
+
+static uint32_t bt_count(void)                  /* packets queued since the central started listening */
+{
+    return bt_txn;
 }
 
 static int bt_vm_rd(void *ctx, uint32_t off, uint8_t *dst, uint32_t n)   /* the flash as stored */

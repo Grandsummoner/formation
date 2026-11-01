@@ -98,6 +98,7 @@ static uint32_t bt_state(void) { return bt_sw ? BT_READY : BT_OFF; }
 static uint32_t bt_state(void) { return bt_sw ? BT_ADV : BT_OFF; }
 #endif
 static int bt_kept(uint8_t rec[BT_KEPT]) { (void)rec; return 0; }
+static uint32_t bt_count(void) { return 0; }
 
 static void app_audio(int32_t *out, uint32_t n);
 static void app_main(void);

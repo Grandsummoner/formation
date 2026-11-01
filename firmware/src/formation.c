@@ -698,7 +698,7 @@ static void draw_foot(void)
     p = p_sig(p, cur.oct);
     p = p_str(p, "  ");
     p = p_str(p, THEME[glob.theme % 3u].name);
-    if (bt_state() >= BT_LINK) p = p_str(p, "  BT");         /* a Bluetooth central is connected */
+    if (bt_state() == BT_READY) p = p_str(p, "  BT");        /* a Bluetooth central is connected and listening */
     *p = 0;
     draw_text_box(8, 204, 224, &FONT_S, s, pal[1], 0);
     p = s;
@@ -914,7 +914,8 @@ static uint32_t view_row(uint32_t i, row_t *r)  /* 0: no such row */
         if (i == 3) {                           /* knob 4: BLUETOOTH, off at every power-on */
             uint32_t b = bt_state();
             setrow(r, "BLUETOOTH", -1, 0);
-            setval_s(r, b == BT_OFF ? "OFF" : b == BT_NOCAL ? "NO CAL" : b == BT_ADV ? "ON" : "CONNECTED");
+            if (b == BT_READY) { char *p = p_str(r->value, "READY "); p = p_num(p, bt_count()); *p = 0; }   /* + the packets queued for it */
+            else setval_s(r, b == BT_OFF ? "OFF" : b == BT_NOCAL ? "NO CAL" : b == BT_ADV ? "WAITING" : "LINKED");   /* LINKED: connected, MIDI not enabled by the other side */
             return 1;
         }
         if (i == 4) { char *p; setrow(r, "DSP LOAD", (int16_t)clampi((int32_t)dsp_pct * 255 / 100, 0, 255), 0); p = p_num(r->value, dsp_pct); *p++ = '%'; *p = 0; return 1; }
@@ -1069,7 +1070,7 @@ static void draw_tick(void)
     if (view == V_PERF || view == V_PAGE) {
         uint32_t m = sig_of(&cur.morph_pos, 1) ^ ((uint32_t)edit_sc << 8) ^ ((uint32_t)mute_mask << 12) ^ sig_of(cur.lfo_rate, 12) ^ ((uint32_t)glob.theme << 20);
         uint32_t f = sig_of(&cur.density, 2) ^ ((uint32_t)cur.oct << 16) ^ ((uint32_t)glob.theme << 24);
-        f = f * 3u + (bt_state() >= BT_LINK);
+        f = f * 3u + (bt_state() == BT_READY);
         if (view == V_PERF) {
             char hs[8];
             hs[0] = (char)(edit_sc + 1u); hs[1] = (char)(cur.mode + 1u); hs[2] = (char)(latch + 1u);

@@ -85,8 +85,9 @@ audio time the sound takes. Keep it under about 50 %; if it is higher, use fewer
 **BLUETOOTH** (knob 4: right is on, left is off) sends everything Formation sends over USB over Bluetooth LE MIDI as
 well, and takes MIDI notes in from a connected device like USB's. It is **off at every power-on**. Switched on, the FM-1
 advertises as `Formation XXXX`; connect to it from a computer, a tablet or a Bluetooth MIDI adapter that acts as the host
-(no pairing is asked). The row reads ON while it waits and CONNECTED once a device is connected and listening; the
-performance screen shows BT beside the theme while it is.
+(no pairing is asked). The row reads WAITING while it advertises, LINKED once a device has connected but has not turned
+the MIDI on, and READY plus a count (the packets queued for it) once it listens; the performance screen shows BT beside
+the theme while it does.
 
 * The first time it is switched on it starts the radio and keeps a copy of the radio's factory values and an address
   in the settings. NO CAL means the radio's factory values could not be found (they come from the stock firmware's

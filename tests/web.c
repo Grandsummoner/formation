@@ -102,6 +102,7 @@ static void bt_init(const uint8_t rec[BT_KEPT]) { (void)rec; bt_sw = 0; }
 static void bt_set(uint32_t on) { bt_sw = on ? 1u : 0u; }
 static uint32_t bt_state(void) { return bt_sw ? BT_ADV : BT_OFF; }
 static int bt_kept(uint8_t rec[BT_KEPT]) { (void)rec; return 0; }
+static uint32_t bt_count(void) { return 0; }
 
 static void app_audio(int32_t *out, uint32_t n);
 static void app_main(void);
