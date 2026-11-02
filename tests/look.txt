@@ -1,0 +1,48 @@
+# Formation host test: the six themes. A chord is playing; each round opens GLO, turns THEME (knob 4), shoots the page, goes home and shoots the performance screen.
+# buttons: 2 FX 7 GLO 8 HOME 12 PLAY    encoders: 5 KNOB4    keys: 0x91 = a chord
+1300 keys 0x91
+1400 btn 12
+1420 btnup 12
+2000 btn 7
+2020 btnup 7
+2100 enc 5 1
+2500 shot
+2600 btn 8
+2620 btnup 8
+3300 shot
+3600 btn 7
+3620 btnup 7
+3700 enc 5 1
+4100 shot
+4200 btn 8
+4220 btnup 8
+4900 shot
+5200 btn 7
+5220 btnup 7
+5300 enc 5 1
+5700 shot
+5800 btn 8
+5820 btnup 8
+6500 shot
+6800 btn 7
+6820 btnup 7
+6900 enc 5 1
+7300 shot
+7400 btn 8
+7420 btnup 8
+8100 shot
+8400 btn 7
+8420 btnup 7
+8500 enc 5 1
+8900 shot
+9000 btn 8
+9020 btnup 8
+9700 shot
+10000 btn 7
+10020 btnup 7
+10100 enc 5 1
+10500 shot
+10600 btn 8
+10620 btnup 8
+11300 shot
+11800 end

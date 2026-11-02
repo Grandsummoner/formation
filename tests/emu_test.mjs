@@ -38,8 +38,8 @@ check(ons.every((n) => n >= 36 && n <= 84), "notes are in a sane range");
 check(peak > 500 && peak < 32767, `the sound is audible and not clipping (peak ${peak})`);
 shot("play");
 
-e.emu_enc(3, 12); e.emu_step(60); shot("knob");     // KNOB2 on the home screen: the overlay
-check(lit() > 1000, "a knob turn draws an overlay");
+e.emu_enc(3, 12); e.emu_step(60); shot("knob");     // KNOB2 on the home screen: the RHYTHM page opens
+check(lit() > 1000, "a knob turn opens a page");
 e.emu_step(1500); shot("back");
 press(2); e.emu_step(200); shot("fx");               // FX page
 e.emu_key(7, 1); e.emu_step(50); e.emu_key(7, 0);    // a key

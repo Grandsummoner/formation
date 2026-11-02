@@ -18,23 +18,31 @@ walk, reverse, skipping). **Legato** sets how long notes last. **Density** raise
 Scene A plays on MIDI channel 1 and scene B on channel 2 (GLO page); the crossfade moves note velocity (and the
 sound) from A to B with an equal-power curve.
 
+The sound is the FM-1's own: eleven instruments (ANALOG, FM, SUPERSAW, PULSE, E PIANO, BELL, PLUCK, ORGAN, BASS, PAD,
+BRASS) per scene, through a delay and a small stereo reverb.
+
 ## Controls
 
 ### The screen
 
 * **Performance screen** (the default): the globe, the eight probability towers, the A-to-B bar, tempo, density and swing.
-* **Touch a value and it takes over the screen**: its name, the value at double size and a bar. It goes back by itself
-  about 0.8 seconds after you stop turning (or let go of the button).
+* **Values are on the pages.** Nothing takes over the screen: turn a knob on the performance screen and the RHYTHM page
+  opens, with the value you are turning lit; it closes by itself about two seconds after you stop. Buttons and the other
+  knobs (PLAY, MODE, the crossfade, a saved slot ...) show a one-line message in place of the footer's first line, in the
+  colour of the scene it is about.
 * **Pages**: some buttons open a page of two halves, four values each. **Knobs 1 to 4** turn the four values of the lit
   half (the one with the bright frame). Press the same button again to move to the next half, then the next page, and
   after the last one back to the performance screen.
+* **Colour**: each theme has a colour for scene A, one for scene B (cells of a scene are drawn in its colour), one for each
+  group of pages (HOME, FX, LFO, GLO), and a colour range for the towers (low to high levels). Six themes: NAVY, MONO,
+  MATRIX, SUNSET, AURORA, NEON (GLO page, TEMPO KEY, knob 4; or the SYSTEM menu).
 
 | Button | Its pages (top half / bottom half) |
 | --- | --- |
 | **HOME** | GENERATE: entropy, harmony, chaos, morph / RHYTHM: rest, density, swing, legato |
-| **FX** | VOICE A: instrument, timbre, delay, level / VOICE B: the same for scene B |
+| **FX** | VOICE A: instrument, timbre, delay, level / VOICE B: the same for scene B; then REVERB: send of A, send of B, size, bright / DELAY: time (1/16, 1/8, 1/8 dotted, 1/4), feedback, tone |
 | **LFO** | speed and depth of the six LFOs, two parameters a half: MORPH REST / LEGATO ENTROPY / HARMONY CHAOS |
-| **GLO** | TEMPO KEY: BPM, step division, transpose, theme / SCALE MIDI: root, scale, MIDI channel of A and of B |
+| **GLO** | TEMPO KEY: BPM, step division, transpose, theme / SCALE MIDI: root, scale, MIDI channel of A and of B; then MIDI SYNC OUT: OFF, START (start and stop only) or CLOCK (24 clocks a beat as well) |
 
 On the performance screen the knobs turn the RHYTHM values: **Knob 1** rest (or, with a step key held, that step's level),
 **Knob 2** density, **Knob 3** swing, **Knob 4** legato. Turn a knob fast and it takes bigger steps.
@@ -69,7 +77,7 @@ On the performance screen the knobs turn the RHYTHM values: **Knob 1** rest (or,
 | --- | --- |
 | **Knobs 1-4** | The four values of the lit half, or the RHYTHM values on the performance screen (above). |
 | **ALGORITHM** | The A-to-B crossfade, on every screen. |
-| **PRESETS** | The edited scene's voice: MIDI only, ANALOG, FM, SUPERSAW, PULSE. |
+| **PRESETS** | The edited scene's voice: MIDI only, ANALOG, FM, SUPERSAW, PULSE, E PIANO, BELL, PLUCK, ORGAN, BASS, PAD, BRASS. |
 | **SELECT** | Menus: SCALE and ROOT, COPY and INIT, SYSTEM (they go back after 2.5 seconds without a touch). |
 | **MASTER** | Volume. |
 
@@ -79,7 +87,7 @@ Knob 1 picks the action (copy A to B, copy B to A, init the edited scene, init e
 
 ### SYSTEM menu
 
-Theme (NAVY, MONOCHROME, MATRIX), the MIDI channels of scene A and B, BLUETOOTH, and the DSP load: how much of the
+Theme (NAVY, MONO, MATRIX, SUNSET, AURORA, NEON), the MIDI channels of scene A and B, BLUETOOTH, and the DSP load: how much of the
 audio time the sound takes. Keep it under about 50 %; if it is higher, use fewer chords or the lighter voices.
 
 **BLUETOOTH** (knob 4: right is on, left is off) sends everything Formation sends over USB over Bluetooth LE MIDI as
@@ -107,6 +115,13 @@ count (the packets queued for it) once it listens; the performance screen shows 
 * **Legato** sets the note length here (10 % to 95 % of a step); in the plugin it reduces the rests.
 * The plugin's Rate and Octaves LFOs are not here (six LFOs: Morph, Rest, Legato, Entropy, Harmony, Chaos).
 * Chords come from the scale, as in the plugin; the held notes are the arp's pool.
-* USB and Bluetooth MIDI notes (any channel) are accepted like keys. The firmware does not send MIDI clock yet.
+* USB and Bluetooth MIDI notes (any channel) are accepted like keys. **MIDI sync out**: PLAY sends MIDI Start and
+  stopping sends Stop; with SYNC at CLOCK it also sends the 24-a-beat clock at the BPM, to USB and Bluetooth (GLO page).
 * Presets are kept in their own flash sector, your working state is saved by itself when the sound is quiet.
-* No reverb; one delay (a dotted eighth), fed by each scene's send.
+* The effects are a mono delay (time, feedback and tone on the FX page, DELAY half; each scene's send is on its VOICE
+  page) and a stereo reverb (REVERB half: a send for each scene, size, bright). Reverb and delay settings: the reverb's
+  four values are part of a preset; the delay's three and the sync setting are kept with your working state.
+* The reverb uses a few percent of the chip's time while it runs (it stops by itself about four seconds after the sound
+  ends, and when both sends are 0): watch DSP LOAD in the SYSTEM menu. E PIANO, BELL and ORGAN cost the most of the
+  voices (about as much as FM).
+* A preset saved before the reverb existed gets the reverb's default settings when you recall it.

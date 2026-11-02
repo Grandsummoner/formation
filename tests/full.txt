@@ -25,7 +25,7 @@
 3300 btn 12
 3320 btnup 12
 4000 shot
-# crossfade A to B on the ALGORITHM knob: the overlay, then back
+# crossfade A to B on the ALGORITHM knob: a message in the footer, the morph bar moves
 4100 enc 1 25
 4200 shot
 5200 shot
@@ -39,8 +39,19 @@
 6400 btn 2
 6420 btnup 2
 6500 shot
+# FX goes on: REVERB (send A, send B, size, bright), then DELAY (time, feedback, tone), then out
 6600 btn 2
 6620 btnup 2
+6640 enc 2 20
+6650 enc 4 -10
+6700 shot
+6720 btn 2
+6740 btnup 2
+6750 enc 2 1
+6760 enc 3 8
+6780 shot
+6790 btn 2
+6795 btnup 2
 # LFO: page 1 top (morph, rest speed and depth), bottom, page 2 top, then out
 6800 btn 5
 6820 btnup 5
@@ -65,8 +76,14 @@
 9400 enc 3 1
 9500 enc 4 1
 10200 shot
+# GLO goes on: MIDI SYNC OUT (the clock and start/stop, to USB and Bluetooth), then out
 10300 btn 7
 10320 btnup 7
+10340 enc 2 -1
+10400 shot
+10420 enc 2 1
+10440 btn 7
+10460 btnup 7
 # EDIT: tap = randomise, long press = auto re-roll each measure
 10500 btn 6
 10520 btnup 6

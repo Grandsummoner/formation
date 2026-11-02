@@ -1,0 +1,21 @@
+# Formation host test: MIDI sync out. PLAY sends Start, the clock runs at 24 a beat, stopping sends Stop and the clock ends.
+# Then SYNC is turned to OFF (GLO page three, knob 1) and PLAY again: nothing but notes.   buttons: 7 GLO 8 HOME 12 PLAY
+1000 btn 12
+1020 btnup 12
+2500 btn 12
+2520 btnup 12
+3500 btn 7
+3520 btnup 7
+3540 btn 7
+3560 btnup 7
+3580 btn 7
+3600 btnup 7
+3700 enc 2 -1
+3750 enc 2 -1
+3800 btn 8
+3820 btnup 8
+4000 btn 12
+4020 btnup 12
+5500 btn 12
+5520 btnup 12
+6500 end

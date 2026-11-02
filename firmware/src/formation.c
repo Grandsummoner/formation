@@ -33,7 +33,8 @@ static const uint8_t SCALE[10][8] = {           /* from Navy Arp 2: eight offset
 static const char *const SCALE_NAME[10] = {"MAJOR", "MINOR", "PENT MIN", "PENT MAJ", "DORIAN", "PHRYGIAN", "LYDIAN",
                                            "MIXOLYD", "HARM MIN", "MEL MIN"};
 static const char *const ROOT_NAME[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-static const char *const INST_NAME[5] = {"MIDI ONLY", "ANALOG", "FM", "SUPERSAW", "PULSE"};
+static const char *const INST_NAME[12] = {"MIDI ONLY", "ANALOG", "FM", "SUPERSAW", "PULSE", "E PIANO", "BELL", "PLUCK",
+                                          "ORGAN", "BASS", "PAD", "BRASS"};
 static const char *const DIV_NAME[4] = {"1/4", "1/8", "1/16", "1/32"};
 static const char *const LFO_RATE[5] = {"OFF", "1/4", "1/8", "1/16", "1/32"};
 static const char *const PNAME[6] = {"MORPH", "REST", "LEGATO", "ENTROPY", "HARMONY", "CHAOS"};
@@ -54,10 +55,15 @@ typedef struct {
     uint8_t lfo_rate[6], lfo_depth[6];
     uint8_t morph_pos, density, swing, bpm, div, scale, root, poly, mode;
     int8_t oct, tr;
-    uint8_t used, pad[4];
+    uint8_t used, rv[4];                        /* rv: reverb send A, send B, size, tone (0 0 0 0: an old preset, see rv_legacy) */
 } preset_t;                                     /* 80 B */
 enum { MODE_ARP = 0, MODE_SEQ = 1 };
-enum { INST_MIDI = 0, INST_ANALOG, INST_FM, INST_SAW, INST_PULSE };
+enum { INST_MIDI = 0, INST_ANALOG, INST_FM, INST_SAW, INST_PULSE, INST_EPIANO, INST_BELL, INST_PLUCK, INST_ORGAN, INST_BASS,
+       INST_PAD, INST_BRASS, NINST };
+
+/* what is not in a preset: the delay's character and the MIDI sync out */
+static struct { uint8_t dtime, dfb, dtone, sync; } fxs = {2, 100, 255, 2};   /* delay time (1/16 1/8 1/8. 1/4), feedback, tone; SYNC OUT: 0 off, 1 start/stop, 2 + clock */
+static const uint32_t DT_K[4] = {661500u, 1323000u, 1984500u, 2646000u};   /* 44100 * 60 * (1/4 1/2 3/4 1 beat): the delay in samples = K / bpm */
 
 static preset_t cur;                            /* the state you play */
 static struct { uint8_t ver, theme, ch[2], slot; } glob = {1, 0, {0, 1}, 0};
@@ -82,12 +88,19 @@ static void preset_init(preset_t *p)
     scene_init(&p->sc[0], 0);
     scene_init(&p->sc[1], 1);
     p->density = 128; p->bpm = 80; p->div = 2; p->scale = 1; p->root = 0; p->mode = MODE_ARP;
+    p->rv[0] = 40; p->rv[1] = 40; p->rv[2] = 170; p->rv[3] = 160;
+}
+static void rv_legacy(preset_t *p)              /* a preset saved before the reverb existed has all four at 0: give it the defaults */
+{
+    if (!(p->rv[0] | p->rv[1] | p->rv[2] | p->rv[3])) { p->rv[0] = 40; p->rv[1] = 40; p->rv[2] = 170; p->rv[3] = 160; }
 }
 
 /* ================================================================== 2. the sound (audio ISR) */
 /* Two scene voices of four notes each. A slot is written by the main loop (inc, inst, tim, lvl, then gate and serial
- * last) and rendered, with its envelope, by the ISR. Instruments are small: analog saw, 2-op FM, 3-saw, pulse,
- * each through a one-pole low-pass (the timbre). A mono delay (dotted eighth) is fed by each scene's send. */
+ * last) and rendered, with its envelope, by the ISR. Eleven instruments, all small: analog saw, 2-op FM, 3-saw, pulse,
+ * electric piano, bell, pluck, organ, bass, pad, brass; each through a one-pole low-pass (the timbre), the plucked and
+ * blown ones with the filter following the envelope. Each scene sends to a mono delay (time, feedback, tone) and to a
+ * small stereo reverb: a four-line feedback network, two allpasses in front. */
 #define NSL 8u
 typedef struct {
     volatile uint32_t inc, serial;
@@ -98,18 +111,35 @@ typedef struct {
     uint8_t st;                                 /* 0 idle, 1 attack, 2 decay / sustain, 3 release */
 } slot_t;
 static slot_t sl[NSL];
-static volatile int32_t gain_a, gain_b, ds_a, ds_b, dly_len;
+static volatile int32_t gain_a, gain_b, ds_a, ds_b, dly_len, dly_fb, dly_k, rv_a, rv_b, rv_g, rv_k;
 static volatile uint8_t busy;
 static volatile uint32_t dsp_max;               /* the longest app_audio block since the last look, in 24 MHz ticks */
 static int32_t bufa[HALF_FRAMES], bufb[HALF_FRAMES];
 static int16_t dly[65536] __attribute__((section(".pool")));
 static uint32_t dly_w;
+static int32_t dly_lp;
+
+/* the envelope of each instrument, in samples at 44.1 kHz: attack, decay to the sustain, release; sustain in tenths */
+static const struct { uint32_t atk, dec, rel; uint8_t sus; } ENV[NINST] = {
+    {240, 13230, 6615, 7},   /* MIDI (not sounded) */
+    {240, 13230, 6615, 7},   /* ANALOG */
+    {240, 13230, 6615, 7},   /* FM */
+    {240, 13230, 6615, 7},   /* SUPERSAW */
+    {240, 13230, 6615, 7},   /* PULSE */
+    {120, 44100, 8820, 3},   /* E PIANO: a second to sink to a third */
+    {60, 88200, 44100, 0},   /* BELL: rings out over two seconds */
+    {40, 20000, 4410, 0},    /* PLUCK: gone in half a second, the filter closing with it */
+    {500, 1, 2205, 10},      /* ORGAN: on while the key is down */
+    {200, 22050, 4410, 8},   /* BASS */
+    {8820, 1, 22050, 10},    /* PAD: a fifth of a second in, half a second out */
+    {2646, 13230, 4410, 9}}; /* BRASS: swells in */
+static const uint16_t IGAIN[NINST] = {256, 256, 256, 256, 256, 270, 210, 300, 290, 256, 330, 290};   /* loudness of each, 256 = 1 (measured on the host: about the same level as ANALOG) */
 
 static void render_slot(slot_t *s, int32_t *buf, uint32_t n)
 {
     uint32_t i, inc = s->inc, ph = s->ph, ph2 = s->ph2, ph3 = s->ph3, width;
     int32_t amp = s->amp, lp = s->lp, lvlq = s->lvl << 16, susq, atk, dec, k, ix;
-    uint8_t st = s->st, inst = s->inst;
+    uint8_t st = s->st, inst = s->inst < NINST ? s->inst : 1;
     if (s->serial != s->seen) {                 /* a new note: attack from where the level is */
         s->seen = s->serial;
         st = 1;
@@ -117,20 +147,24 @@ static void render_slot(slot_t *s, int32_t *buf, uint32_t n)
     }
     if (!s->gate && (st == 1 || st == 2)) {     /* released */
         st = 3;
-        s->rel = amp / 6615 + 1;
+        s->rel = amp / (int32_t)ENV[inst].rel + 1;
     }
     if (!st) return;
-    susq = (lvlq / 10) * 7;
-    atk = lvlq / 240 + 1;
-    dec = (lvlq - susq) / 13230 + 1;
+    susq = (lvlq / 10) * ENV[inst].sus;
+    atk = lvlq / (int32_t)ENV[inst].atk + 1;
+    dec = (lvlq - susq) / (int32_t)ENV[inst].dec + 1;
     k = 1500 + (int32_t)s->tim * 105;
     ix = ((int32_t)s->tim + 1) * 256;
     width = 644245094u + (uint32_t)s->tim * 11790106u;
     for (i = 0; i < n; i++) {
-        int32_t w;
+        int32_t w, kk = k, a16;
         if (st == 1) { amp += atk; if (amp >= lvlq) { amp = lvlq; st = 2; } }
-        else if (st == 2) { if (amp > susq) { amp -= dec; if (amp < susq) amp = susq; } }
+        else if (st == 2) {
+            if (amp > susq) { amp -= dec; if (amp < susq) amp = susq; }
+            if (amp <= 0) { amp = 0; st = 0; break; }                       /* a note that has sunk to nothing is over */
+        }
         else { amp -= s->rel; if (amp <= 0) { amp = 0; st = 0; break; } }
+        a16 = amp >> 16;                                                    /* 0..8000: the level now */
         ph += inc;
         switch (inst) {
         case INST_FM:
@@ -145,20 +179,93 @@ static void render_slot(slot_t *s, int32_t *buf, uint32_t n)
         case INST_PULSE:
             w = ph < width ? 12000 : -12000;
             break;
+        case INST_EPIANO:                                                   /* FM 1:1, the index following the level */
+            ph2 += inc;
+            w = sine(ph + (uint32_t)(sine(ph2) * ((ix * a16) >> 13))) >> 1;
+            break;
+        case INST_BELL:                                                     /* FM 3.5:1 (a little off) and an octave partial */
+            ph2 += (inc >> 1) * 7u + (inc >> 6);
+            ph3 += inc << 1;
+            w = (sine(ph + (uint32_t)(sine(ph2) * ((ix * a16) >> 13))) >> 1) + (sine(ph3) >> 3);
+            break;
+        case INST_PLUCK:                                                    /* a saw, the filter closing as it dies */
+            w = (int32_t)(ph >> 17) - 16384;
+            kk = 400 + ((k * a16) >> 13);
+            break;
+        case INST_ORGAN:                                                    /* three drawbars: 1, 2 and 4 */
+            ph2 += inc << 1;
+            ph3 += inc << 2;
+            w = ((sine(ph) >> 1) + (sine(ph2) >> 2) + (sine(ph3) >> 3)) >> 1;
+            break;
+        case INST_BASS:                                                     /* a saw and a square an octave down */
+            ph2 += inc >> 1;
+            w = (((int32_t)(ph >> 17) - 16384 + (ph2 < 0x80000000u ? 7000 : -7000)) * 3) >> 2;
+            kk = k >> 1;
+            break;
+        case INST_PAD:                                                      /* three saws, wide apart */
+            ph2 += inc + (inc >> 7);
+            ph3 += inc - (inc >> 7);
+            w = (int32_t)(((ph >> 17) + (ph2 >> 17) + (ph3 >> 17)) / 3u) - 16384;
+            break;
+        case INST_BRASS:                                                    /* two saws, the filter opening with the level */
+            ph2 += inc + (inc >> 9);
+            w = (int32_t)(((ph >> 17) + (ph2 >> 17)) >> 1) - 16384;
+            kk = 700 + ((k * a16) >> 13);
+            break;
         default:
             w = (int32_t)(ph >> 17) - 16384;
             break;
         }
-        lp += ((w - lp) * k) >> 15;
-        buf[i] += (lp * (amp >> 16)) >> 15;
+        lp += ((w - lp) * kk) >> 15;
+        buf[i] += (lp * a16) >> 15;
     }
     s->ph = ph; s->ph2 = ph2; s->ph3 = ph3; s->amp = amp; s->lp = lp; s->st = st;
 }
 
+/* the reverb: two allpasses, then four delay lines (lengths about 25..40 ms, each damped by a one-pole low-pass)
+ * fed back through a Householder matrix (I - 1/2 of all ones: it loses no energy, so the decay is the gain g and the
+ * damping); the left output takes lines 0 and 2, the right 1 and 3 */
+#define RVN 2048u
+static int16_t rv_d[4][RVN] __attribute__((section(".pool")));
+static int16_t ap_d[2][256] __attribute__((section(".pool")));
+static const uint16_t RV_LEN[4] = {1171, 1307, 1523, 1789};
+static const uint16_t AP_LEN[2] = {149, 239};
+static uint32_t rv_w, ap_w, rv_run;
+static int32_t rv_lp[4];
+
+static void reverb(int32_t x, int32_t g, int32_t k, int32_t *l, int32_t *r)
+{
+    uint32_t w = rv_w, aw = ap_w, i;
+    int32_t t[4], sm, d, u;
+    d = ap_d[0][(aw - AP_LEN[0]) & 255u];
+    u = x - (d >> 1);
+    ap_d[0][aw & 255u] = (int16_t)clampi(u, -32767, 32767);
+    x = d + (u >> 1);
+    d = ap_d[1][(aw - AP_LEN[1]) & 255u];
+    u = x - (d >> 1);
+    ap_d[1][aw & 255u] = (int16_t)clampi(u, -32767, 32767);
+    x = d + (u >> 1);
+    ap_w = aw + 1u;
+    for (i = 0; i < 4u; i++) {
+        int32_t y = rv_d[i][(w - RV_LEN[i]) & (RVN - 1u)];
+        rv_lp[i] += ((y - rv_lp[i]) * k) >> 15;
+        t[i] = rv_lp[i];
+    }
+    sm = (t[0] + t[1] + t[2] + t[3]) >> 1;
+    for (i = 0; i < 4u; i++) {
+        int32_t f = (((t[i] - sm) >> 1) * (g >> 1)) >> 13;
+        rv_d[i][w & (RVN - 1u)] = (int16_t)clampi(x + f, -32767, 32767);
+    }
+    rv_w = w + 1u;
+    *l = (t[0] + t[2]) >> 1;
+    *r = (t[1] + t[3]) >> 1;
+}
+
 static void app_audio(int32_t *out, uint32_t n)
 {
-    uint32_t v, i, any = 0, t0 = fm1_ticks();
-    int32_t ga = gain_a, gb = gain_b, da = ds_a, db = ds_b, len = dly_len;
+    uint32_t v, i, any = 0, t0 = fm1_ticks(), run;
+    int32_t ga = gain_a, gb = gain_b, da = ds_a, db = ds_b, len = dly_len, fb = dly_fb, dk = dly_k;
+    int32_t ra = rv_a, rb = rv_b, rg = rv_g, rk = rv_k;
     memset(bufa, 0, sizeof bufa);
     memset(bufb, 0, sizeof bufb);
     for (v = 0; v < NSL; v++) {
@@ -166,15 +273,22 @@ static void app_audio(int32_t *out, uint32_t n)
         any |= sl[v].st;
     }
     busy = (uint8_t)(any != 0u);
+    run = rv_run;
+    if ((ra | rb) && any) run = 700u;                                       /* the tail goes on for about four seconds */
+    else if (run) run--;
+    rv_run = run;
     for (i = 0; i < n; i++) {
-        int32_t a = (bufa[i] * ga) >> 7, b = (bufb[i] * gb) >> 7, d, in, s;
+        int32_t a = (bufa[i] * ga) >> 7, b = (bufb[i] * gb) >> 7, d, in, s, rl = 0, rr = 0;
         d = dly[(dly_w - (uint32_t)len) & 0xFFFFu];
-        in = ((a * da + b * db) >> 8) + ((d * 100) >> 8);
+        dly_lp += ((d - dly_lp) * dk) >> 15;
+        d = dly_lp;
+        in = ((a * da + b * db) >> 8) + ((d * fb) >> 8);
         dly[dly_w & 0xFFFFu] = (int16_t)clampi(in, -32767, 32767);
         dly_w++;
         s = a + b + (d >> 1);
-        out[2u * i] += s;
-        out[2u * i + 1u] += s;
+        if (run) reverb((a * ra + b * rb) >> 8, rg, rk, &rl, &rr);
+        out[2u * i] += s + rl;
+        out[2u * i + 1u] += s + rr;
     }
     t0 = fm1_ticks() - t0;
     if (t0 > dsp_max) dsp_max = t0;
@@ -195,17 +309,23 @@ static void weights(void)
     gain_b = (int32_t)((wb * ((uint32_t)cur.sc[1].level + 1u)) >> 8);
     ds_a = cur.sc[0].dsend;
     ds_b = cur.sc[1].dsend;
+    rv_a = cur.rv[0];
+    rv_b = cur.rv[1];
+    rv_g = 19660 + (int32_t)cur.rv[2] * 42;                 /* the size: the feedback gain, 0.60 .. 0.93 */
+    rv_k = 5000 + (int32_t)cur.rv[3] * 106;                 /* the tone: the damping low-pass, dark .. bright */
+    dly_fb = fxs.dfb;
+    dly_k = 3000 + (int32_t)fxs.dtone * 113;
 }
 
 static void voice_on(uint32_t sc, uint32_t note)
 {
     uint32_t idx = sc * 4u + (rr[sc]++ & 3u);
     slot_t *s = &sl[idx];
-    if (cur.sc[sc].inst == INST_MIDI || note > 127u) return;
+    if (cur.sc[sc].inst == INST_MIDI || cur.sc[sc].inst >= NINST || note > 127u) return;
     s->inc = INC_C9[note % 12u] >> (10u - note / 12u);
     s->inst = cur.sc[sc].inst;
     s->tim = cur.sc[sc].timbre;
-    s->lvl = 8000;
+    s->lvl = (8000 * (int32_t)IGAIN[cur.sc[sc].inst]) >> 8;
     slot_note[idx] = note;
     s->gate = 1;
     s->serial++;
@@ -267,7 +387,7 @@ static uint8_t frz_p[8], frz_e[6];              /* what Freeze locks: the step l
 static uint8_t mute_mask;
 static int32_t pend_slot = -1;
 static uint8_t eff[6];                          /* the six parameters now: morphed between the scenes, plus the LFOs */
-static uint32_t lfo_ph[6], next_t, last_t, step_hit;
+static uint32_t lfo_ph[6], next_t, last_t, step_hit, clk_next;
 static uint8_t trail[8];
 static uint32_t lfo_rem;
 static uint32_t hit_ticks;                      /* when a note last sounded: the screen flashes on it */
@@ -384,10 +504,13 @@ static void transport(int on)
         cstep = 7; fwd = 1;
         next_t = fm1_ticks();
         last_t = next_t;
+        clk_next = next_t;
+        if (fxs.sync) midi_send(0xFAu, 0, 0);               /* MIDI Start */
     } else if (!on && running) {
         running = 0;
         offs_run(0, 1);
         voices_off();
+        if (fxs.sync) midi_send(0xFCu, 0, 0);               /* MIDI Stop */
     }
 }
 
@@ -479,24 +602,47 @@ static void recall_apply(int32_t slot)          /* the engine calls it at the en
 {
     if (slot < 0 || slot > 15 || !bank.p[slot].used) return;
     cur = bank.p[slot];
+    rv_legacy(&cur);
     glob.slot = (uint8_t)slot;
 }
 
 /* ================================================================== 6. the screen */
-typedef struct { const char *name; uint16_t c[5]; uint16_t lfo; } theme_t;
-static const theme_t THEME[3] = {
-    {"NAVY", {RGB(0, 36, 46), RGB(0, 84, 100), RGB(16, 140, 150), RGB(56, 200, 205), RGB(130, 255, 240)}, RGB(255, 170, 50)},
-    {"MONOCHROME", {RGB(40, 40, 44), RGB(84, 84, 90), RGB(136, 136, 144), RGB(190, 190, 198), RGB(236, 236, 244)}, RGB(0, 220, 255)},
-    {"MATRIX", {RGB(0, 36, 8), RGB(0, 90, 22), RGB(10, 150, 40), RGB(50, 214, 80), RGB(150, 255, 160)}, RGB(255, 0, 170)}};
-#define C_A pal[3]
-#define C_B (THEME[glob.theme % 3u].lfo)
+/* a theme: the ramp of the chrome (dark to bright), the two scenes' colours, a colour for each group of pages (HOME, FX,
+ * LFO, GLO), and the towers (low to high). The first three keep their places in the saved settings. */
+enum { G_HOME, G_FX, G_LFO, G_GLO };                  /* the groups of pages: each has a colour in the theme */
+#define NTHEME 6u
+typedef struct { const char *name; uint16_t c[5]; uint16_t a, b, g[4], t0, t1; } theme_t;
+static const theme_t THEME[NTHEME] = {
+    {"NAVY", {RGB(0, 36, 46), RGB(0, 84, 100), RGB(16, 140, 150), RGB(56, 200, 205), RGB(130, 255, 240)},
+     RGB(56, 200, 205), RGB(255, 170, 50), {RGB(56, 200, 205), RGB(150, 120, 255), RGB(255, 170, 50), RGB(90, 220, 120)}, RGB(20, 90, 130), RGB(90, 240, 230)},
+    {"MONO", {RGB(40, 40, 44), RGB(84, 84, 90), RGB(136, 136, 144), RGB(190, 190, 198), RGB(236, 236, 244)},
+     RGB(190, 190, 198), RGB(0, 220, 255), {RGB(190, 190, 198), RGB(0, 220, 255), RGB(0, 220, 255), RGB(190, 190, 198)}, RGB(60, 60, 66), RGB(236, 236, 244)},
+    {"MATRIX", {RGB(0, 36, 8), RGB(0, 90, 22), RGB(10, 150, 40), RGB(50, 214, 80), RGB(150, 255, 160)},
+     RGB(50, 214, 80), RGB(255, 0, 170), {RGB(50, 214, 80), RGB(0, 220, 255), RGB(255, 0, 170), RGB(230, 255, 60)}, RGB(0, 90, 22), RGB(150, 255, 160)},
+    {"SUNSET", {RGB(46, 12, 24), RGB(110, 30, 50), RGB(190, 70, 60), RGB(240, 130, 70), RGB(255, 220, 160)},
+     RGB(255, 120, 90), RGB(255, 210, 80), {RGB(255, 120, 90), RGB(255, 90, 170), RGB(255, 210, 80), RGB(255, 160, 60)}, RGB(120, 30, 90), RGB(255, 200, 90)},
+    {"AURORA", {RGB(8, 28, 36), RGB(16, 80, 90), RGB(30, 150, 130), RGB(90, 220, 150), RGB(200, 255, 210)},
+     RGB(90, 230, 160), RGB(170, 120, 255), {RGB(90, 230, 160), RGB(170, 120, 255), RGB(255, 120, 200), RGB(80, 200, 255)}, RGB(30, 90, 160), RGB(120, 255, 170)},
+    {"NEON", {RGB(20, 10, 40), RGB(60, 30, 110), RGB(120, 60, 190), RGB(200, 100, 255), RGB(245, 200, 255)},
+     RGB(255, 60, 170), RGB(60, 230, 255), {RGB(255, 60, 170), RGB(60, 230, 255), RGB(255, 230, 60), RGB(170, 110, 255)}, RGB(90, 20, 160), RGB(255, 90, 190)}};
+#define TH (THEME[glob.theme % NTHEME])
+#define C_A (TH.a)
+#define C_B (TH.b)
+#define GCOL(grp) (TH.g[(grp) & 3u])
 
 static void theme_set(uint32_t t)
 {
     uint32_t k;
-    glob.theme = (uint8_t)(t % 3u);
+    glob.theme = (uint8_t)(t % NTHEME);
     for (k = 0; k < 5u; k++) pal[k] = THEME[glob.theme].c[k];
 }
+
+static uint16_t mixc(uint16_t c0, uint16_t c1, uint32_t t)      /* t 0..255: c0 -> c1 */
+{
+    uint32_t r0 = c0 >> 11, g0 = (c0 >> 5) & 63u, b0 = c0 & 31u, r1 = c1 >> 11, g1 = (c1 >> 5) & 63u, b1 = c1 & 31u, u = 255u - t;
+    return (uint16_t)((((r0 * u + r1 * t) / 255u) << 11) | (((g0 * u + g1 * t) / 255u) << 5) | ((b0 * u + b1 * t) / 255u));
+}
+static uint16_t dimc(uint16_t c, uint32_t t) { return mixc(C_BLACK, c, t); }       /* t 255: as it is, 0: black */
 
 static char *p_str(char *p, const char *s) { while (*s) *p++ = *s++; return p; }
 static char *p_num(char *p, uint32_t v)
@@ -515,16 +661,16 @@ static char *p_note(char *p, uint32_t n)
     return p_num(p, n / 12u - 1u);
 }
 
-/* a message that takes over the screen while a value is touched: its name, the value big, a bar */
+/* a message that does not take over the screen: for a moment it replaces the footer's first line ("PLAY RUNNING",
+ * "A-B 50%"), in the colour of the scene it is about. The values of the knobs are on the page halves instead. */
 static char hud_name[16], hud_val[16];
 static uint32_t hud_until, ov_btn;
-static int32_t hud_bar = -1;
-static uint8_t hud_scn;                         /* 0 none, 1 scene A, 2 scene B: shown above the name */
+static uint8_t hud_scn;                         /* 0 none, 1 scene A, 2 scene B */
 static void hud(const char *name, const char *val, int32_t bar)
 {
     char *p = p_str(hud_name, name); *p = 0;
     p = p_str(hud_val, val); *p = 0;
-    hud_bar = bar;
+    (void)bar;
     hud_scn = 0;
     hud_until = fm1_ms + 800u;
 }
@@ -588,6 +734,7 @@ static void draw_globe(int32_t cx, int32_t cy)
     if (lfo_on) radius += ((sine(lfo_ph[0] ? lfo_ph[0] : lfo_ph[3]) >> 12) * (int32_t)(dsum > 255u ? 255u : dsum)) >> 11;
     for (r = 0; r < GR; r++) {
         int32_t px = 0, py = 0;
+        uint16_t base = r < 3u ? C_A : C_B;                                 /* the parallels: scene A's colour, the meridians: B's */
         for (i = 0; i <= GP; i++) {
             uint32_t k = i & (GP - 1u);
             int32_t x = gx[r][k], y = gy[r][k], z = gz[r][k], x1, z1, y2, z2, sx, sy;
@@ -597,7 +744,7 @@ static void draw_globe(int32_t cx, int32_t cy)
             z2 = (y * st + z1 * ct) >> 15;
             sx = cx + ((x1 * radius) >> 15);
             sy = cy - ((y2 * radius) >> 15);
-            if (i) cv_line(px, py, sx, sy, z2 > 9000 ? pal[4] : z2 > -9000 ? pal[2] : pal[1]);
+            if (i) cv_line(px, py, sx, sy, z2 > 9000 ? base : z2 > -9000 ? dimc(base, 150) : dimc(base, 70));
             px = sx; py = sy;
         }
     }
@@ -624,8 +771,8 @@ static void draw_towers(void)
     cv_begin(240, 64, C_BLACK);
     for (i = 0; i < 8u; i++) {
         int32_t x = 8 + (int32_t)i * 28, h = 2 + (int32_t)pv[i] * 54 / 255, th = 2 + (int32_t)trail[i] * 54 / 255;
-        uint16_t col = (mute_mask >> i) & 1u ? pal[1] : (running && cstep == i) ? pal[4] : C_A;
-        if (th > h) cv_rect(x, 60 - th, 24, th - h, pal[0]);                  /* the phosphor trail above */
+        uint16_t col = (mute_mask >> i) & 1u ? pal[1] : (running && cstep == i) ? pal[4] : mixc(TH.t0, TH.t1, pv[i]);
+        if (th > h) cv_rect(x, 60 - th, 24, th - h, dimc(mixc(TH.t0, TH.t1, trail[i]), 90));   /* the phosphor trail above */
         cv_rect(x, 60 - h, 24, h, col);
         if (running && cstep == i) cv_rect(x, 61, 24, 2, pal[4]);
         else cv_rect(x, 61, 24, 1, pal[1]);
@@ -647,7 +794,7 @@ static void draw_head(void)
     if (frozen) p = p_str(p, " FRZ");
     if (auto_roll) p = p_str(p, " RND");
     *p = 0;
-    draw_text_box(8, 2, 224, &FONT_S, s, frozen ? C_B : pal[4], 0);
+    draw_text_box(8, 2, 224, &FONT_S, s, frozen ? pal[4] : edit_sc ? C_B : C_A, 0);
 }
 
 static void draw_globe_hud(void)
@@ -659,15 +806,15 @@ static void draw_globe_hud(void)
     p = p_str(p, " ");
     p = p_str(p, SCALE_NAME[cur.scale % 10u]);
     *p = 0;
-    cv_text(80, 4, &FONT_S, s, pal[3]);
+    cv_text(80, 4, &FONT_S, s, GCOL(G_HOME));
     p = s;
     p = p_str(p, "A ");
-    p = p_str(p, INST_NAME[cur.sc[0].inst % 5u]);
+    p = p_str(p, INST_NAME[cur.sc[0].inst % NINST]);
     *p = 0;
     cv_text(80, 24, &FONT_S, s, C_A);
     p = s;
     p = p_str(p, "B ");
-    p = p_str(p, INST_NAME[cur.sc[1].inst % 5u]);
+    p = p_str(p, INST_NAME[cur.sc[1].inst % NINST]);
     *p = 0;
     cv_text(80, 44, &FONT_S, s, C_B);
     cv_blit(0, 26);
@@ -679,14 +826,14 @@ static void draw_morph(void)
     static const char LET[6] = {'M', 'R', 'L', 'E', 'H', 'C'};
     char t[2] = {0, 0};
     cv_begin(240, 32, C_BLACK);
-    cv_rect(8, 8, 224, 2, pal[1]);
+    for (i = 0; i < 8u; i++) cv_rect(8 + (int32_t)i * 28, 8, 28, 2, dimc(mixc(C_A, C_B, i * 255u / 7u), 130));   /* the track: A's colour to B's */
     cv_rect((int32_t)x, 2, 16, 14, pal[4]);
     cv_text(8, 16, &FONT_S, "A", edit_sc ? pal[1] : C_A);
     cv_text(222, 16, &FONT_S, "B", edit_sc ? C_B : pal[1]);
     for (i = 0; i < 6u; i++) {
         uint8_t on = cur.lfo_rate[i] && cur.lfo_depth[i];
         t[0] = LET[i];
-        cv_text(70 + (int32_t)i * 16, 16, &FONT_S, t, on ? C_B : pal[1]);
+        cv_text(70 + (int32_t)i * 16, 16, &FONT_S, t, on ? GCOL(G_LFO) : pal[1]);
     }
     cv_blit(0, 164);
 }
@@ -694,58 +841,42 @@ static void draw_morph(void)
 static void draw_foot(void)
 {
     char s[40], *p = s;
-    p = p_str(p, "OCT ");
-    p = p_sig(p, cur.oct);
-    p = p_str(p, "  ");
-    p = p_str(p, THEME[glob.theme % 3u].name);
-    if (bt_state() == BT_READY) p = p_str(p, "  BT");        /* a Bluetooth central is connected and listening */
-    *p = 0;
-    draw_text_box(8, 204, 224, &FONT_S, s, pal[1], 0);
+    if (fm1_ms < hud_until) {                                  /* a message: in place of the first line */
+        p = p_str(p, hud_name);
+        *p++ = ' ';
+        p = p_str(p, hud_val);
+        *p = 0;
+        draw_text_box(8, 204, 224, &FONT_S, s, hud_scn == 1u ? C_A : hud_scn == 2u ? C_B : pal[4], 0);
+    } else {
+        p = p_str(p, "OCT ");
+        p = p_sig(p, cur.oct);
+        p = p_str(p, "  ");
+        p = p_str(p, TH.name);
+        if (bt_state() == BT_READY) p = p_str(p, "  BT");    /* a Bluetooth central is connected and listening */
+        *p = 0;
+        draw_text_box(8, 204, 224, &FONT_S, s, GCOL(G_GLO), 0);
+    }
     p = s;
     p = p_str(p, "DEN ");
     p = p_pct(p, cur.density);
     p = p_str(p, "  SWG ");
     p = p_pct(p, cur.swing);
     *p = 0;
-    draw_text_box(8, 222, 224, &FONT_S, s, pal[2], 0);
-}
-
-/* ---- double-size text for the overlay: the large font, every pixel a 2x2 block */
-static int32_t cv_text2(int32_t x, int32_t y, const felucca_font_t *f, const char *s, uint16_t c)
-{
-    uint16_t ramp[16];
-    uint32_t r = c >> 11, g = (c >> 5) & 63u, b = c & 31u, a;
-    for (a = 0; a < 16u; a++)
-        ramp[a] = (uint16_t)(((r * a / 15u) << 11) | ((g * a / 15u) << 5) | (b * a / 15u));
-    for (; *s; s++) {
-        uint32_t gi = glyph(f, (uint8_t)*s), gx, gy, w = f->bw[gi], bpr = (w + 1u) / 2u;
-        const uint8_t *gd = f->data + f->off[gi];
-        for (gy = 0; gy < f->h; gy++)
-            for (gx = 0; gx < w; gx++) {
-                uint32_t v = gd[gy * bpr + gx / 2u];
-                v = (gx & 1u) ? (v & 15u) : (v >> 4);
-                if (v) {
-                    int32_t px = x - 2 * (int32_t)f->pad + 2 * (int32_t)gx, py = y + 2 * (int32_t)gy;
-                    cv_pset(px, py, ramp[v]); cv_pset(px + 1, py, ramp[v]);
-                    cv_pset(px, py + 1, ramp[v]); cv_pset(px + 1, py + 1, ramp[v]);
-                }
-            }
-        x += 2 * (int32_t)f->adv[gi];
-    }
-    return x;
+    draw_text_box(8, 222, 224, &FONT_S, s, GCOL(G_HOME), 0);
 }
 
 /* ---- the cells: what one knob controls on a page, how it reads, how it turns */
 enum { K_NONE, K_DENS, K_SWING, K_P, K_AB, K_INST, K_TIMB, K_DLY, K_LVL, K_LSPD, K_LDEP, K_BPM, K_STEP, K_TRANS,
-       K_THEME, K_ROOT, K_SCALE, K_CHA, K_CHB };
+       K_THEME, K_ROOT, K_SCALE, K_CHA, K_CHB, K_RVA, K_RVB, K_RVS, K_RVT, K_DTM, K_DFB, K_DTN, K_SYNC };
 typedef struct { uint8_t kind, arg; } cell_t;
 
 static const char *const PSHORT[6] = {"MORPH", "REST", "LEGATO", "ENTROP", "HARMNY", "CHAOS"};
 static const char *const LSHORT[6] = {"MOR", "RES", "LEG", "ENT", "HAR", "CHA"};
-static const char *const INST_SHORT[5] = {"MIDI", "ANALOG", "FM", "SUPSAW", "PULSE"};
+static const char *const INST_SHORT[12] = {"MIDI", "ANALOG", "FM", "SUPSAW", "PULSE", "EPIANO", "BELL", "PLUCK", "ORGAN", "BASS", "PAD", "BRASS"};
 static const char *const SCALE_SHORT[10] = {"MAJOR", "MINOR", "PENTMN", "PENTMJ", "DORIAN", "PHRYG", "LYDIAN",
                                             "MIXOLY", "HARMMN", "MELMN"};
-static const char *const THEME_SHORT[3] = {"NAVY", "MONO", "MATRIX"};
+static const char *const DTM_NAME[4] = {"1/16", "1/8", "1/8.", "1/4"};
+static const char *const SYNC_NAME[3] = {"OFF", "START", "CLOCK"};
 
 static void cpy(char *d, const char *s) { *p_str(d, s) = 0; }
 static char *p_p100(char *p, uint32_t v255) { return p_num(p, (v255 * 100u + 127u) / 255u); }
@@ -767,7 +898,7 @@ static void cell_text(cell_t c, char *name, char *val, int32_t *bar, uint32_t *s
         *bar = s->p[a6];
         break;
     case K_AB: cpy(name, "A-B"); *p_p100(val, cur.morph_pos) = 0; *bar = cur.morph_pos; break;
-    case K_INST: cpy(name, "INST"); cpy(val, INST_SHORT[v->inst % 5u]); *scn = (c.arg & 1u) + 1u; break;
+    case K_INST: cpy(name, "INST"); cpy(val, INST_SHORT[v->inst % NINST]); *scn = (c.arg & 1u) + 1u; break;
     case K_TIMB: cpy(name, "TIMBRE"); *p_p100(val, v->timbre) = 0; *bar = v->timbre; *scn = (c.arg & 1u) + 1u; break;
     case K_DLY: cpy(name, "DELAY"); *p_p100(val, v->dsend) = 0; *bar = v->dsend; *scn = (c.arg & 1u) + 1u; break;
     case K_LVL: cpy(name, "LEVEL"); *p_p100(val, v->level) = 0; *bar = v->level; *scn = (c.arg & 1u) + 1u; break;
@@ -784,11 +915,19 @@ static void cell_text(cell_t c, char *name, char *val, int32_t *bar, uint32_t *s
     case K_BPM: cpy(name, "BPM"); *p_num(val, cur.bpm) = 0; break;
     case K_STEP: cpy(name, "STEP"); cpy(val, DIV_NAME[cur.div & 3u]); break;
     case K_TRANS: cpy(name, "TRANSP"); *p_sig(val, cur.tr) = 0; break;
-    case K_THEME: cpy(name, "THEME"); cpy(val, THEME_SHORT[glob.theme % 3u]); break;
+    case K_THEME: cpy(name, "THEME"); cpy(val, TH.name); break;
     case K_ROOT: cpy(name, "ROOT"); cpy(val, ROOT_NAME[cur.root % 12u]); break;
     case K_SCALE: cpy(name, "SCALE"); cpy(val, SCALE_SHORT[cur.scale % 10u]); break;
     case K_CHA: cpy(name, "CH A"); *p_num(val, (uint32_t)glob.ch[0] + 1u) = 0; break;
     case K_CHB: cpy(name, "CH B"); *p_num(val, (uint32_t)glob.ch[1] + 1u) = 0; break;
+    case K_RVA: cpy(name, "REV A"); *p_p100(val, cur.rv[0]) = 0; *bar = cur.rv[0]; *scn = 1; break;
+    case K_RVB: cpy(name, "REV B"); *p_p100(val, cur.rv[1]) = 0; *bar = cur.rv[1]; *scn = 2; break;
+    case K_RVS: cpy(name, "SIZE"); *p_p100(val, cur.rv[2]) = 0; *bar = cur.rv[2]; break;
+    case K_RVT: cpy(name, "BRIGHT"); *p_p100(val, cur.rv[3]) = 0; *bar = cur.rv[3]; break;
+    case K_DTM: cpy(name, "TIME"); cpy(val, DTM_NAME[fxs.dtime & 3u]); break;
+    case K_DFB: cpy(name, "FDBK"); *p_p100(val, fxs.dfb) = 0; *bar = fxs.dfb; break;
+    case K_DTN: cpy(name, "TONE"); *p_p100(val, fxs.dtone) = 0; *bar = fxs.dtone; break;
+    case K_SYNC: cpy(name, "SYNC"); cpy(val, SYNC_NAME[fxs.sync % 3u]); break;
     default: break;
     }
 }
@@ -804,7 +943,7 @@ static void cell_adj(cell_t c, int32_t d)       /* d: signed clicks, larger when
     case K_SWING: adj(&cur.swing, d, 3); break;
     case K_P: adj(&s->p[c.arg % 6u], d, 3); break;
     case K_AB: adj(&cur.morph_pos, d, 3); break;
-    case K_INST: v->inst = (uint8_t)clampi((int32_t)v->inst + sg, 0, 4); break;
+    case K_INST: v->inst = (uint8_t)clampi((int32_t)v->inst + sg, 0, (int32_t)NINST - 1); break;
     case K_TIMB: adj(&v->timbre, d, 3); break;
     case K_DLY: adj(&v->dsend, d, 3); break;
     case K_LVL: adj(&v->level, d, 3); break;
@@ -813,11 +952,19 @@ static void cell_adj(cell_t c, int32_t d)       /* d: signed clicks, larger when
     case K_BPM: cur.bpm = (uint8_t)clampi((int32_t)cur.bpm + d, 40, 240); break;
     case K_STEP: cur.div = (uint8_t)clampi((int32_t)cur.div + sg, 0, 3); break;
     case K_TRANS: cur.tr = (int8_t)clampi((int32_t)cur.tr + sg, -12, 12); break;
-    case K_THEME: theme_set((uint32_t)((int32_t)glob.theme + 3 + sg) % 3u); break;
+    case K_THEME: theme_set((uint32_t)((int32_t)glob.theme + (int32_t)NTHEME + sg) % NTHEME); break;
     case K_ROOT: cur.root = (uint8_t)clampi((int32_t)cur.root + sg, 0, 11); break;
     case K_SCALE: cur.scale = (uint8_t)clampi((int32_t)cur.scale + sg, 0, 9); break;
     case K_CHA: glob.ch[0] = (uint8_t)clampi((int32_t)glob.ch[0] + sg, 0, 15); break;
     case K_CHB: glob.ch[1] = (uint8_t)clampi((int32_t)glob.ch[1] + sg, 0, 15); break;
+    case K_RVA: adj(&cur.rv[0], d, 3); break;
+    case K_RVB: adj(&cur.rv[1], d, 3); break;
+    case K_RVS: adj(&cur.rv[2], d, 3); break;
+    case K_RVT: adj(&cur.rv[3], d, 3); break;
+    case K_DTM: fxs.dtime = (uint8_t)clampi((int32_t)fxs.dtime + sg, 0, 3); break;
+    case K_DFB: fxs.dfb = (uint8_t)clampi((int32_t)fxs.dfb + d * 3, 0, 230); break;
+    case K_DTN: adj(&fxs.dtone, d, 3); break;
+    case K_SYNC: fxs.sync = (uint8_t)clampi((int32_t)fxs.sync + sg, 0, 2); break;
     default: break;
     }
 }
@@ -845,7 +992,6 @@ static int32_t knob_delta(uint32_t id, int32_t e)   /* a fast turn takes bigger 
 }
 
 /* ---- pages: two halves of four cells; the knobs 1-4 turn the cells of the lit half; the buttons step through */
-enum { G_HOME, G_FX, G_LFO, G_GLO };
 static const char *const GROUP_NAME[4] = {"HOME", "FX", "LFO", "GLO"};
 typedef struct { uint8_t group, pos; const char *tab; cell_t c[4]; } half_t;
 static const half_t HALF[] = {
@@ -853,14 +999,19 @@ static const half_t HALF[] = {
     {G_HOME, 1, "RHYTHM", {{K_P, 1}, {K_DENS, 0}, {K_SWING, 0}, {K_P, 2}}},
     {G_FX, 0, "VOICE A", {{K_INST, 0}, {K_TIMB, 0}, {K_DLY, 0}, {K_LVL, 0}}},
     {G_FX, 1, "VOICE B", {{K_INST, 1}, {K_TIMB, 1}, {K_DLY, 1}, {K_LVL, 1}}},
+    {G_FX, 0, "REVERB", {{K_RVA, 0}, {K_RVB, 0}, {K_RVS, 0}, {K_RVT, 0}}},
+    {G_FX, 1, "DELAY", {{K_DTM, 0}, {K_DFB, 0}, {K_DTN, 0}, {K_NONE, 0}}},
     {G_LFO, 0, "MORPH REST", {{K_LSPD, 0}, {K_LDEP, 0}, {K_LSPD, 1}, {K_LDEP, 1}}},
     {G_LFO, 1, "LEGATO ENTROPY", {{K_LSPD, 2}, {K_LDEP, 2}, {K_LSPD, 3}, {K_LDEP, 3}}},
     {G_LFO, 0, "HARMONY CHAOS", {{K_LSPD, 4}, {K_LDEP, 4}, {K_LSPD, 5}, {K_LDEP, 5}}},
     {G_GLO, 0, "TEMPO KEY", {{K_BPM, 0}, {K_STEP, 0}, {K_TRANS, 0}, {K_THEME, 0}}},
     {G_GLO, 1, "SCALE MIDI", {{K_ROOT, 0}, {K_SCALE, 0}, {K_CHA, 0}, {K_CHB, 0}}},
+    {G_GLO, 0, "MIDI SYNC OUT", {{K_SYNC, 0}, {K_NONE, 0}, {K_NONE, 0}, {K_NONE, 0}}},
 };
 #define NHALF ((int32_t)(sizeof HALF / sizeof HALF[0]))
 static int32_t cur_half = -1;                   /* -1: the performance screen */
+static uint8_t page_auto;                       /* the page was opened by a knob on the performance screen: it closes by itself */
+static uint32_t pg_t0;
 
 static void goto_group(uint32_t g)              /* its button: into the group, then half by half, then out */
 {
@@ -877,7 +1028,7 @@ static void goto_group(uint32_t g)              /* its button: into the group, t
 }
 
 /* ---- the other screens: the menus (SELECT knob) with rows of label, value, bar */
-enum { V_PERF, V_SCALE, V_COPY, V_SYS, V_PAGE, V_SLOTS, V_OVL };
+enum { V_PERF, V_SCALE, V_COPY, V_SYS, V_PAGE, V_SLOTS };
 static uint8_t view, view_drawn = 255;
 static uint8_t menu_pg, copy_act, save_mode, recall_mode, tr_view;
 static uint32_t tr_t0, dsp_pct;
@@ -908,7 +1059,7 @@ static uint32_t view_row(uint32_t i, row_t *r)  /* 0: no such row */
         if (i == 0) { setrow(r, COPY_NAME[copy_act & 3u], -1, 1); setval_s(r, "SAVE=GO"); return 1; }
         return 0;
     case V_SYS:
-        if (i == 0) { setrow(r, "THEME", -1, 0); setval_s(r, THEME[glob.theme % 3u].name); return 1; }
+        if (i == 0) { setrow(r, "THEME", -1, 0); setval_s(r, TH.name); return 1; }
         if (i == 1) { setrow(r, "OUT A CH", -1, 0); setval_n(r, (uint32_t)glob.ch[0] + 1u); return 1; }
         if (i == 2) { setrow(r, "OUT B CH", -1, 0); setval_n(r, (uint32_t)glob.ch[1] + 1u); return 1; }
         if (i == 3) {                           /* knob 4: BLUETOOTH, off at every power-on */
@@ -932,7 +1083,7 @@ static void draw_row_strip(uint32_t y, const row_t *r)
     cv_text(236 - text_w(&FONT_S, r->value), 2, &FONT_S, r->value, pal[4]);
     if (r->bar >= 0) {
         cv_rect(12, 20, 216, 2, pal[1]);
-        cv_rect(12, 20, (int32_t)r->bar * 216 / 255, 2, r->hl ? pal[4] : pal[3]);
+        cv_rect(12, 20, (int32_t)r->bar * 216 / 255, 2, r->hl ? pal[4] : C_A);
     }
     cv_blit(0, y);
 }
@@ -944,7 +1095,7 @@ static void draw_slots(void)                    /* the 16 preset slots: filled s
     cv_begin(240, 64, C_BLACK);
     for (i = 0; i < 16u; i++) {
         int32_t x = 10 + (int32_t)(i & 7u) * 28, y = 4 + (int32_t)(i >> 3) * 30;
-        uint16_t c = i == glob.slot ? pal[4] : pal[3];
+        uint16_t c = i == glob.slot ? pal[4] : C_A;
         if (bank.p[i].used) cv_rect(x, y, 24, 24, c);
         else { cv_rect(x, y, 24, 1, pal[1]); cv_rect(x, y + 23, 24, 1, pal[1]); cv_rect(x, y, 1, 24, pal[1]); cv_rect(x + 23, y, 1, 24, pal[1]); }
     }
@@ -955,7 +1106,7 @@ static void draw_slots(void)                    /* the 16 preset slots: filled s
 static void draw_panel(int32_t hi, uint32_t y, int lit)
 {
     uint32_t i;
-    uint16_t fc = lit ? pal[4] : pal[1];
+    uint16_t gc = hi >= 0 ? GCOL(HALF[hi].group) : pal[1], fc = lit ? gc : dimc(gc, 70);
     cv_begin(240, 64, C_BLACK);
     cv_rect(2, 0, 236, lit ? 2 : 1, fc);
     cv_rect(2, 63, 236, lit ? 2 : 1, fc);
@@ -968,14 +1119,16 @@ static void draw_panel(int32_t hi, uint32_t y, int lit)
             uint32_t scn;
             const felucca_font_t *vf;
             if (HALF[hi].c[i].kind == K_NONE) continue;
+            uint16_t cc;
             cell_text(HALF[hi].c[i], name, val, &bar, &scn);
-            cv_text(x + 3, 4, &FONT_S, name, lit ? pal[3] : pal[1]);
+            cc = scn == 1u ? C_A : scn == 2u ? C_B : gc;                       /* a cell of a scene: that scene's colour */
+            cv_text(x + 3, 4, &FONT_S, name, lit ? cc : dimc(cc, 90));
             vf = text_w(&FONT_L, val) <= 52 ? &FONT_L : &FONT_S;
             vy = vf == &FONT_L ? 20 : 28;
-            cv_text(x + (52 - text_w(vf, val)) / 2, vy, vf, val, lit ? pal[4] : pal[2]);
+            cv_text(x + (52 - text_w(vf, val)) / 2, vy, vf, val, lit ? pal[4] : dimc(pal[4], 120));
             if (bar >= 0) {
-                cv_rect(x + 3, 56, 46, 3, pal[0]);
-                cv_rect(x + 3, 56, bar * 46 / 255, 3, lit ? pal[4] : pal[2]);
+                cv_rect(x + 3, 56, 46, 3, dimc(cc, 50));
+                cv_rect(x + 3, 56, bar * 46 / 255, 3, lit ? cc : dimc(cc, 90));
             }
             if (i) cv_rect(x - 2, 10, 1, 44, pal[0]);
         }
@@ -1002,40 +1155,9 @@ static uint32_t panel_sig(int32_t hi, int lit)
     return h;
 }
 
-/* the overlay: scene tag, the name, the value at double size, a bar of 45 segments */
-static void draw_ov_tag(void)
-{
-    const char *t = hud_scn == 1u ? "SCENE A" : "SCENE B";
-    cv_begin(240, 16, C_BLACK);
-    if (hud_scn) cv_text((240 - text_w(&FONT_S, t)) / 2, 0, &FONT_S, t, hud_scn == 1u ? C_A : C_B);
-    cv_blit(0, 28);
-}
-static void draw_ov_name(void)
-{
-    cv_begin(240, 32, C_BLACK);
-    cv_text((240 - text_w(&FONT_L, hud_name)) / 2, 0, &FONT_L, hud_name, pal[3]);
-    cv_blit(0, 50);
-}
-static void draw_ov_val(void)
-{
-    int32_t w2 = text_w(&FONT_L, hud_val) * 2;
-    cv_begin(240, 64, C_BLACK);
-    if (w2 <= 232) cv_text2((240 - w2) / 2, 0, &FONT_L, hud_val, pal[4]);
-    else cv_text((240 - text_w(&FONT_L, hud_val)) / 2, 16, &FONT_L, hud_val, pal[4]);
-    cv_blit(0, 96);
-}
-static void draw_ov_bar(void)
-{
-    uint32_t i, lit = hud_bar >= 0 ? (uint32_t)hud_bar * 45u / 255u : 0u;
-    cv_begin(240, 24, C_BLACK);
-    if (hud_bar >= 0)
-        for (i = 0; i < 45u; i++) cv_rect(8 + (int32_t)i * 5, 4, 4, 16, i < lit ? pal[4] : pal[0]);
-    cv_blit(0, 176);
-}
-
 static uint32_t t_anim, t_rows, t_tower;
 static char head_cache[8], pg_head[40];
-static uint32_t foot_sig, morph_sig, slots_sig, pg_sig[2], ov_sig[3];
+static uint32_t foot_sig, morph_sig, slots_sig, pg_sig[2];
 
 static uint32_t sig_of(const void *p, uint32_t n)
 {
@@ -1055,22 +1177,15 @@ static void draw_tick(void)
         for (i = 0; i < 5u; i++) rows_cache[i][0] = 1;
         head_cache[0] = 0x7F; pg_head[0] = 1;                 /* (a value no header has: it is drawn again) */
         foot_sig = 0; morph_sig = 0; slots_sig = 0; pg_sig[0] = pg_sig[1] = 0;
-        ov_sig[0] = ov_sig[1] = ov_sig[2] = 0;
         t_anim = 0;
-        if (view == V_SCALE || view == V_COPY || view == V_SYS) draw_text_box(0, 18, 240, &FONT_L, view_title(), pal[4], 1);
-        return;
-    }
-    if (view == V_OVL) {
-        uint32_t s0 = sig_str(hud_name) + hud_scn * 977u, s1 = sig_str(hud_val), s2 = (uint32_t)(hud_bar + 1) * 2654435761u + 1u;
-        if (s0 != ov_sig[0]) { ov_sig[0] = s0; draw_ov_tag(); return; }
-        if (s1 != ov_sig[1]) { ov_sig[1] = s1; draw_ov_name(); draw_ov_val(); return; }
-        if (s2 != ov_sig[2]) { ov_sig[2] = s2; draw_ov_bar(); return; }
+        if (view == V_SCALE || view == V_COPY || view == V_SYS) draw_text_box(0, 18, 240, &FONT_L, view_title(), C_A, 1);
         return;
     }
     if (view == V_PERF || view == V_PAGE) {
         uint32_t m = sig_of(&cur.morph_pos, 1) ^ ((uint32_t)edit_sc << 8) ^ ((uint32_t)mute_mask << 12) ^ sig_of(cur.lfo_rate, 12) ^ ((uint32_t)glob.theme << 20);
         uint32_t f = sig_of(&cur.density, 2) ^ ((uint32_t)cur.oct << 16) ^ ((uint32_t)glob.theme << 24);
         f = f * 3u + (bt_state() == BT_READY);
+        f = f * 31u + (fm1_ms < hud_until ? sig_str(hud_name) + sig_str(hud_val) * 3u + hud_scn + 1u : 0u);   /* a message shows and goes */
         if (view == V_PERF) {
             char hs[8];
             hs[0] = (char)(edit_sc + 1u); hs[1] = (char)(cur.mode + 1u); hs[2] = (char)(latch + 1u);
@@ -1086,7 +1201,8 @@ static void draw_tick(void)
             p = p_str(hs, GROUP_NAME[HALF[lit].group]);
             p = p_str(p, "  ");
             p_str(p, HALF[lit].tab);
-            if (memcmp(pg_head, hs, sizeof hs) != 0) { memcpy(pg_head, hs, sizeof hs); draw_text_box(8, 2, 224, &FONT_S, hs, pal[4], 0); return; }
+            hs[39] = (char)(1 + glob.theme);                                    /* (a new theme draws the header again) */
+            if (memcmp(pg_head, hs, sizeof hs) != 0) { memcpy(pg_head, hs, sizeof hs); draw_text_box(8, 2, 224, &FONT_S, hs, GCOL(HALF[lit].group), 0); return; }
             s0 = panel_sig(top, HALF[lit].pos == 0);
             if (s0 != pg_sig[0]) { pg_sig[0] = s0; draw_panel(top, 22, HALF[lit].pos == 0); return; }
             s1 = panel_sig(bot, HALF[lit].pos == 1);
@@ -1167,8 +1283,7 @@ static void save_slot(uint32_t slot)
 static void select_view(void)
 {
     uint8_t v = V_PERF;
-    if (fm1_ms < hud_until) v = V_OVL;
-    else if (save_mode || recall_mode) v = V_SLOTS;
+    if (save_mode || recall_mode) v = V_SLOTS;
     else if (tr_view) v = tr_view;
     else if (cur_half >= 0) v = V_PAGE;
     view = v;
@@ -1176,6 +1291,7 @@ static void select_view(void)
 
 typedef struct { preset_t cur; uint8_t ver, theme, ch0, ch1, slot; } saved_t;     /* the record up to v1.0 (85 B) */
 typedef struct { saved_t s; uint8_t bt[BT_KEPT]; } saved2_t;                         /* + the radio's kept bytes (225 B) */
+typedef struct { saved_t s; uint8_t bt[BT_KEPT]; uint8_t fx[4]; } saved3_t;               /* + delay time, feedback, tone, sync (229 B) */
 typedef struct { saved_t s; uint8_t bt[112]; } saved1b_t;                            /* the record of the first Bluetooth builds (197 B) */
 
 static void leds(uint32_t lit_notes)
@@ -1208,7 +1324,7 @@ static void leds(uint32_t lit_notes)
     fm1_led_key(KEY_LED(BLACK_KEY[10]), mute_mask != 0);
 }
 
-static saved2_t sv;
+static saved3_t sv;
 
 static void app_init(void)
 {
@@ -1218,15 +1334,19 @@ static void app_init(void)
     rng_s ^= fm1_ticks();
     if (!rng_s) rng_s = 1;
     memset(&sv, 0, sizeof sv);
-    if (settings_load(&sv, sizeof sv) != 0) {                   /* (an older record: without the pairing, or without the radio's bytes either) */
-        saved1b_t o;
+    if (settings_load(&sv, sizeof sv) == 0) {
+        fxs.dtime = sv.fx[0] & 3u; fxs.dfb = sv.fx[1] > 230u ? 230u : sv.fx[1]; fxs.dtone = sv.fx[2]; fxs.sync = sv.fx[3] > 2u ? 2u : sv.fx[3];
+    } else {                                                    /* (an older record: without the delay and sync bytes, ...) */
+        saved2_t o2;
+        saved1b_t o1;
         memset(&sv, 0, sizeof sv);
-        if (settings_load(&o, sizeof o) == 0) { sv.s = o.s; memcpy(sv.bt, o.bt, sizeof o.bt); }
-        else if (settings_load(&sv.s, sizeof sv.s) != 0) sv.s.ver = 0;
+        if (settings_load(&o2, sizeof o2) == 0) { sv.s = o2.s; memcpy(sv.bt, o2.bt, sizeof o2.bt); }
+        else if (settings_load(&o1, sizeof o1) == 0) { sv.s = o1.s; memcpy(sv.bt, o1.bt, sizeof o1.bt); }   /* ... without the pairing ... */
+        else if (settings_load(&sv.s, sizeof sv.s) != 0) sv.s.ver = 0;                                      /* ... or without the radio's bytes either */
     }
     bt_init(sv.bt);
     if (sv.s.ver == 1u) {
-        cur = sv.s.cur; glob.theme = sv.s.theme % 3u; glob.ch[0] = sv.s.ch0 & 15u; glob.ch[1] = sv.s.ch1 & 15u; glob.slot = sv.s.slot & 15u;
+        cur = sv.s.cur; rv_legacy(&cur); glob.theme = sv.s.theme % NTHEME; glob.ch[0] = sv.s.ch0 & 15u; glob.ch[1] = sv.s.ch1 & 15u; glob.slot = sv.s.slot & 15u;
         cur.bpm = (uint8_t)clampi(cur.bpm, 40, 240);
         cur.div &= 3u; cur.scale %= 10u; cur.root %= 12u; cur.oct = (int8_t)clampi(cur.oct, -3, 3);
         cur.tr = (int8_t)clampi(cur.tr, -12, 12);
@@ -1262,6 +1382,11 @@ static void app_step(void)                      /* one pass of the main loop (a 
         do_step();
         next_t += (cstep & 1u) ? base - sw : base + sw;      /* (cstep is the step that just played: even steps are late) */
         if ((int32_t)(now - next_t) > (int32_t)(base * 4u)) next_t = now + base;
+    }
+    if (running && fxs.sync == 2u) {                                                /* MIDI clock: 24 a beat = one every 60e6 / bpm ticks */
+        uint32_t per = 60000000u / (cur.bpm < 40u ? 40u : cur.bpm), guard = 0;
+        while ((int32_t)(now - clk_next) >= 0 && guard++ < 4u) { midi_send(0xF8u, 0, 0); clk_next += per; }
+        if ((int32_t)(now - clk_next) > 0) clk_next = now + per;                    /* far behind (a stall): start the grid again */
     }
 
     /* --- the keys */
@@ -1351,7 +1476,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
         if (edit_down && !edit_long) { roll(); hud("RANDOMISED", edit_sc ? "SCENE B" : "SCENE A", -1); hud_scn = (uint8_t)(edit_sc + 1u); dirty = 1; t_change = fm1_ms; }
         edit_down = 0;
     }
-    if (b & ((1u << BTN_FX) | (1u << BTN_LFO) | (1u << BTN_GLO) | (1u << BTN_HOME))) { tr_view = 0; menu_pg = 0; hud_until = 0; }
+    if (b & ((1u << BTN_FX) | (1u << BTN_LFO) | (1u << BTN_GLO) | (1u << BTN_HOME))) { tr_view = 0; menu_pg = 0; hud_until = 0; page_auto = 0; }
     if (b & (1u << BTN_FX)) goto_group(G_FX);
     if (b & (1u << BTN_LFO)) goto_group(G_LFO);
     if (b & (1u << BTN_GLO)) goto_group(G_GLO);
@@ -1410,25 +1535,31 @@ static void app_step(void)                      /* one pass of the main loop (a 
             } else if (tr_view == V_COPY) {
                 if (e2) copy_act = (uint8_t)clampi((int32_t)copy_act + (e2 > 0 ? 1 : -1), 0, 3);
             } else {
-                if (e2) { theme_set((uint32_t)((int32_t)glob.theme + 3 + (e2 > 0 ? 1 : -1)) % 3u); view_drawn = 255; }
+                if (e2) { theme_set((uint32_t)((int32_t)glob.theme + (int32_t)NTHEME + (e2 > 0 ? 1 : -1)) % NTHEME); view_drawn = 255; }
                 if (e3) glob.ch[0] = (uint8_t)clampi((int32_t)glob.ch[0] + (e3 > 0 ? 1 : -1), 0, 15);
                 if (e4) glob.ch[1] = (uint8_t)clampi((int32_t)glob.ch[1] + (e4 > 0 ? 1 : -1), 0, 15);
                 if (e5) bt_set(e5 > 0 ? 1u : 0u);                  /* turn right: ON, left: OFF */
             }
         } else {
-            const half_t *h = &HALF[cur_half >= 0 ? cur_half : 1];            /* the performance screen turns the RHYTHM cells */
+            int32_t perf = cur_half < 0;
+            int step_edit = perf && (hold_step_mask & 0xFFu) && ev[0];       /* K1 with a step key held: that step's level */
+            const half_t *h;
+            if (perf && !step_edit) { cur_half = 1; page_auto = 1; }           /* the performance screen turns the RHYTHM cells: they open as a page */
+            if (page_auto) pg_t0 = fm1_ms;
+            h = &HALF[cur_half];
             for (i = 0; i < 4; i++) {
                 cell_t c = h->c[i];
                 if (!ev[i] || c.kind == K_NONE) continue;
-                if (cur_half < 0 && i == 0 && (hold_step_mask & 0xFFu)) {      /* K1 with a step key held: that step's level */
+                if (step_edit && i == 0) {
                     uint32_t first = 8;
                     for (kk = 0; kk < 8u; kk++)
                         if (hold_step_mask >> kk & 1u) { adj(&cur.sc[edit_sc].fader[kk], knob_delta(2, ev[i]), 3); if (first > 7u) first = kk; }
                     hud_pct("STEP LEVEL", cur.sc[edit_sc].fader[first & 7u]);
                     hud_scn = (uint8_t)(edit_sc + 1u);
                 } else {
-                    cell_adj(c, c.kind == K_P || c.kind == K_DENS || c.kind == K_SWING || c.kind == K_LDEP || c.kind == K_TIMB || c.kind == K_DLY || c.kind == K_LVL || c.kind == K_BPM ? knob_delta((uint32_t)(2 + i), ev[i]) : ev[i]);
-                    cell_overlay(c);
+                    cell_adj(c, c.kind == K_P || c.kind == K_DENS || c.kind == K_SWING || c.kind == K_LDEP || c.kind == K_TIMB || c.kind == K_DLY || c.kind == K_LVL || c.kind == K_BPM ||
+                                (c.kind >= K_RVA && c.kind <= K_RVT) || c.kind == K_DFB || c.kind == K_DTN ? knob_delta((uint32_t)(2 + i), ev[i]) : ev[i]);
+                    if (cur_half < 0) cell_overlay(c);                                      /* (a page shows its values itself) */
                 }
             }
         }
@@ -1443,9 +1574,10 @@ static void app_step(void)                      /* one pass of the main loop (a 
 
     /* --- bookkeeping: the screens that leave by themselves, the sound's settings, the screen */
     if (tr_view && fm1_ms - tr_t0 > 2500u) { tr_view = 0; menu_pg = 0; }
+    if (page_auto && fm1_ms - pg_t0 > 1800u) { page_auto = 0; if (cur_half == 1) cur_half = -1; }   /* the page a knob opened closes by itself */
     { static uint32_t t_dsp; if (fm1_ms - t_dsp >= 500u) { uint32_t m = dsp_max; dsp_max = 0; t_dsp = fm1_ms; dsp_pct = m / 1392u; } }   /* % of one 5.8 ms block = 139200 ticks; under 50 is comfortable (docs/RULES.md) */
     weights();
-    { uint32_t bpm = cur.bpm < 40u ? 40u : cur.bpm; dly_len = (int32_t)clampi((int32_t)(1984500u / bpm), 1000, 65000); }
+    { uint32_t bpm = cur.bpm < 40u ? 40u : cur.bpm; dly_len = (int32_t)clampi((int32_t)(DT_K[fxs.dtime & 3u] / bpm), 1000, 65000); }
     select_view();
     if (fm1_ms - t_ui >= 12u) { t_ui = fm1_ms; leds(lit); }
     draw_tick();
@@ -1453,6 +1585,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
     if (bt_kept(sv.bt)) { dirty = 1; t_change = fm1_ms; }                       /* the radio's address and trims copy: saved with the settings */
     if (dirty && !busy && fm1_ms - t_change > 2000u) {                          /* save when silent: an erase stalls the sound */
         sv.s.cur = cur; sv.s.ver = 1; sv.s.theme = glob.theme; sv.s.ch0 = glob.ch[0]; sv.s.ch1 = glob.ch[1]; sv.s.slot = glob.slot;
+        sv.fx[0] = fxs.dtime; sv.fx[1] = fxs.dfb; sv.fx[2] = fxs.dtone; sv.fx[3] = fxs.sync;
         settings_save(&sv, sizeof sv);
         dirty = 0;
     }
