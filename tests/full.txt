@@ -76,12 +76,14 @@
 9400 enc 3 1
 9500 enc 4 1
 10200 shot
-# GLO goes on: MIDI SYNC OUT (the clock and start/stop, to USB and Bluetooth), then out
+# GLO goes on: CHORD SYNC (the chord type, its voicing, the MIDI sync out), then out
 10300 btn 7
 10320 btnup 7
-10340 enc 2 -1
+10340 enc 2 1
+10350 enc 3 1
 10400 shot
-10420 enc 2 1
+10420 enc 2 -1
+10430 enc 3 -1
 10440 btn 7
 10460 btnup 7
 # EDIT: tap = randomise, long press = auto re-roll each measure

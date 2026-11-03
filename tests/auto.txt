@@ -1,0 +1,40 @@
+# Formation host test: the tempo range and AUTO A-B. BPM is turned up to its top (480), AUTO is set to PING-PONG over 2 bars, then it plays:
+# the A-to-B marker should go to and fro, a trip every 2 bars (at 480 BPM, 16th-note steps: 1 bar = 0.5 s). buttons: 7 GLO 12 PLAY   encoders: 2 KNOB1 3 KNOB2
+1000 btn 7
+1020 btnup 7
+1100 enc 2 600
+1500 shot
+1600 enc 2 -700
+2000 shot
+2100 enc 2 400
+2400 btn 7
+2420 btnup 7
+2440 btn 7
+2460 btnup 7
+2480 btn 7
+2500 btnup 7
+2600 enc 2 1
+2620 enc 2 1
+2640 enc 3 -1
+3000 shot
+3100 btn 8
+3120 btnup 8
+3200 btn 12
+3220 btnup 12
+3400 shot
+3525 shot
+3650 shot
+3775 shot
+3900 shot
+4025 shot
+4150 shot
+4275 shot
+4400 shot
+4525 shot
+4650 shot
+4775 shot
+4900 shot
+5025 shot
+5150 shot
+5275 shot
+5600 end

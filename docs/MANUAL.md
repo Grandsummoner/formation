@@ -25,7 +25,7 @@ BRASS) per scene, through a delay and a small stereo reverb.
 
 ### The screen
 
-* **Performance screen** (the default): the globe, the eight probability towers, the A-to-B bar, tempo, density and swing.
+* **Performance screen** (the default): the globe (its rings in the colours of the theme), the eight probability towers, the A-to-B bar, tempo, density and swing.
 * **Values are on the pages.** Nothing takes over the screen: turn a knob on the performance screen and the RHYTHM page
   opens, with the value you are turning lit; it closes by itself about two seconds after you stop. Buttons and the other
   knobs (PLAY, MODE, the crossfade, a saved slot ...) show a one-line message in place of the footer's first line, in the
@@ -33,6 +33,10 @@ BRASS) per scene, through a delay and a small stereo reverb.
 * **Pages**: some buttons open a page of two halves, four values each. **Knobs 1 to 4** turn the four values of the lit
   half (the one with the bright frame). Press the same button again to move to the next half, then the next page, and
   after the last one back to the performance screen.
+* **LED flashes**: the LED of what an action was about blinks for under a second, as the plugin flashes its buttons. A
+  save makes the slot's key and SAVE blink fast; a recall makes them blink slowly (a recall waits for the end of the measure
+  while it plays); a copy or an init flashes the two scene keys (or the one) and SAVE; a randomise flashes the scene's key
+  and EDIT.
 * **Colour**: each theme has a colour for scene A, one for scene B (cells of a scene are drawn in its colour), one for each
   group of pages (HOME, FX, LFO, GLO), and a colour range for the towers (low to high levels). Six themes: NAVY, MONO,
   MATRIX, SUNSET, AURORA, NEON (GLO page, TEMPO KEY, knob 4; or the SYSTEM menu).
@@ -42,7 +46,7 @@ BRASS) per scene, through a delay and a small stereo reverb.
 | **HOME** | GENERATE: entropy, harmony, chaos, morph / RHYTHM: rest, density, swing, legato |
 | **FX** | VOICE A: instrument, timbre, delay, level / VOICE B: the same for scene B; then REVERB: send of A, send of B, size, bright / DELAY: time (1/16, 1/8, 1/8 dotted, 1/4), feedback, tone |
 | **LFO** | speed and depth of the six LFOs, two parameters a half: MORPH REST / LEGATO ENTROPY / HARMONY CHAOS |
-| **GLO** | TEMPO KEY: BPM, step division, transpose, theme / SCALE MIDI: root, scale, MIDI channel of A and of B; then MIDI SYNC OUT: OFF, START (start and stop only) or CLOCK (24 clocks a beat as well) |
+| **GLO** | TEMPO KEY: BPM (1 to 480), step division, transpose, theme / SCALE MIDI: root, scale, MIDI channel of A and of B; then CHORD SYNC: CHORD (STACK, SUS, QUART, ADD9), SPREAD (AUTO, CLOSE, OPEN) and SYNC (the MIDI sync out: OFF, START for start and stop only, or CLOCK for the 24-a-beat clock as well). Knobs 1 to 3 turn them; then AUTO A-B: AUTO (OFF, ONCE, PING, SAW), BARS (1, 2, 4, 8, 16, 32 or 64) and SHAPE (LINEAR or EASE). |
 
 On the performance screen the knobs turn the RHYTHM values: **Knob 1** rest (or, with a step key held, that step's level),
 **Knob 2** density, **Knob 3** swing, **Knob 4** legato. Turn a knob fast and it takes bigger steps.
@@ -64,6 +68,25 @@ On the performance screen the knobs turn the RHYTHM values: **Knob 1** rest (or,
 | **ARP** | ARP mode: notes come from the keys you hold (or are latched), or from the scale and root if none are held. **Long press: LATCH on / off.** |
 | **SEQ** | SEQ mode: loops eight stored notes (set them with a step key plus a lower key). |
 | **SEL** | POLY on / off (chords from Harmony). |
+
+**Tempo.** BPM goes from 1 to 480 (the knob speeds up when you turn it fast). At 1 BPM with quarter-note steps one step takes a
+minute; at 480 BPM with 32nd-note steps one step takes 16 ms. The extremes are for slow evolution and for rolls, with these
+limits: at the top with the fastest steps and big chords, USB and above all Bluetooth carry less than the notes (Bluetooth drops
+what it cannot send, USB is fine to well past 200 notes a second).
+
+**AUTO A-B.** The crossfader moves by itself, locked to the step clock and so to the MIDI clock Formation sends: one trip from A to
+B takes 1, 2, 4, 8, 16, 32 or 64 bars (a bar is 4 beats, whatever the step division). ONCE goes to the far end and rests (each
+PLAY makes a new trip), PING goes to and fro, SAW goes from A to B and starts again from A. SHAPE EASE slows the movement near the
+ends. A hand on the ALGORITHM knob, or a recalled preset, sets the position and the trip carries on from there. FREEZE holds it, and it
+moves only while the sequencer plays.
+
+**Chords.** With POLY on, each note that plays brings a chord built on it, from the degrees of the current scale (so the chord
+is always the scale's own: a triad on each note of C MAJOR is C, Dm, Em, F, G, Am, B dim). How many notes joins in with
+HARMONY: a quarter of the way up gives the note and its fifth, half way a triad, three quarters a seventh chord.
+CHORD (GLO page, CHORD SYNC) picks the kind: STACK is stacked thirds (triads and sevenths), SUS swaps the third for the
+fourth, QUART stacks fourths, ADD9 is root, third, fifth and ninth. SPREAD is the voicing: CLOSE keeps the notes together,
+OPEN lifts the third and the seventh an octave (a wider, softer chord), AUTO opens the chords low down (below E3), where
+close thirds are muddy. CHAOS moves the whole chord an octave, never a single note out of it.
 | **REC** | FREEZE: locks the pitch pool and all the levels as they are now, rhythm and pitch together. Press again to release. |
 | **EDIT** | **Randomise** the edited scene (step levels, rest, legato, morph, entropy, harmony, chaos). **Long press: AUTO ROLL**, a new roll at the start of every measure (lit while on, RND in the header). |
 | **OCT- / OCT+** | Octave, -3 to +3. |
@@ -76,7 +99,7 @@ On the performance screen the knobs turn the RHYTHM values: **Knob 1** rest (or,
 | Knob | What |
 | --- | --- |
 | **Knobs 1-4** | The four values of the lit half, or the RHYTHM values on the performance screen (above). |
-| **ALGORITHM** | The A-to-B crossfade, on every screen. |
+| **ALGORITHM** | The A-to-B crossfade, on every screen. With AUTO A-B on, turning it moves the crossfade by hand and the automatic trip carries on from where you leave it. |
 | **PRESETS** | The edited scene's voice: MIDI only, ANALOG, FM, SUPERSAW, PULSE, E PIANO, BELL, PLUCK, ORGAN, BASS, PAD, BRASS. |
 | **SELECT** | Menus: SCALE and ROOT, COPY and INIT, SYSTEM (they go back after 2.5 seconds without a touch). |
 | **MASTER** | Volume. |

@@ -62,7 +62,7 @@ enum { INST_MIDI = 0, INST_ANALOG, INST_FM, INST_SAW, INST_PULSE, INST_EPIANO, I
        INST_PAD, INST_BRASS, NINST };
 
 /* what is not in a preset: the delay's character and the MIDI sync out */
-static struct { uint8_t dtime, dfb, dtone, sync; } fxs = {2, 100, 255, 2};   /* delay time (1/16 1/8 1/8. 1/4), feedback, tone; SYNC OUT: 0 off, 1 start/stop, 2 + clock */
+static struct { uint8_t dtime, dfb, dtone, sync, chord, voic, amode, abars, ashp; } fxs = {2, 100, 255, 2, 0, 0, 0, 2, 0};   /* amode: AUTO A-B off / once / ping-pong / saw; abars: 2^abars bars a trip; ashp: linear / ease */   /* delay time (1/16 1/8 1/8. 1/4), feedback, tone; SYNC OUT: 0 off, 1 start/stop, 2 + clock; the chord type and its voicing */
 static const uint32_t DT_K[4] = {661500u, 1323000u, 1984500u, 2646000u};   /* 44100 * 60 * (1/4 1/2 3/4 1 beat): the delay in samples = K / bpm */
 
 static preset_t cur;                            /* the state you play */
@@ -82,12 +82,28 @@ static void scene_init(scene_t *s, int b)
     s->dsend = 60;
     s->level = b ? 150 : 170;
 }
+/* the tempo: 1 .. 480 BPM. The low 8 bits are in bpm, the high 2 in used (bits 1 and 2; bit 0 is the slot's used flag), so a preset
+ * saved when the tempo was 40 .. 240 in a byte reads as it did. */
+#define BPM_MIN 1u
+#define BPM_MAX 480u
+static uint32_t bpm_get(const preset_t *p)
+{
+    uint32_t b = (uint32_t)p->bpm | (((uint32_t)p->used >> 1) & 3u) << 8;
+    return b < BPM_MIN ? BPM_MIN : b > BPM_MAX ? BPM_MAX : b;
+}
+static void bpm_set(preset_t *p, int32_t v)
+{
+    uint32_t b = (uint32_t)clampi(v, (int32_t)BPM_MIN, (int32_t)BPM_MAX);
+    p->bpm = (uint8_t)b;
+    p->used = (uint8_t)((p->used & 1u) | ((b >> 8) << 1));
+}
+
 static void preset_init(preset_t *p)
 {
     memset(p, 0, sizeof *p);
     scene_init(&p->sc[0], 0);
     scene_init(&p->sc[1], 1);
-    p->density = 128; p->bpm = 80; p->div = 2; p->scale = 1; p->root = 0; p->mode = MODE_ARP;
+    p->density = 128; bpm_set(p, 80); p->div = 2; p->scale = 1; p->root = 0; p->mode = MODE_ARP;
     p->rv[0] = 40; p->rv[1] = 40; p->rv[2] = 170; p->rv[3] = 160;
 }
 static void rv_legacy(preset_t *p)              /* a preset saved before the reverb existed has all four at 0: give it the defaults */
@@ -388,19 +404,22 @@ static uint8_t mute_mask;
 static int32_t pend_slot = -1;
 static uint8_t eff[6];                          /* the six parameters now: morphed between the scenes, plus the LFOs */
 static uint32_t lfo_ph[6], next_t, last_t, step_hit, clk_next;
+static int32_t auto_ph, auto_last = -1;       /* AUTO A-B: the position of the trip (0 = A .. 65535 = B), and the morph value it wrote last */
+static int8_t auto_dir = 1;
+static uint8_t auto_rest, auto_arming;       /* ONCE: it has arrived; armed (a new mode or PLAY): pick the way again */
 static uint8_t trail[8];
 static uint32_t lfo_rem;
 static uint32_t hit_ticks;                      /* when a note last sounded: the screen flashes on it */
 
 static uint32_t step_ticks(void)                /* one step, in 24 MHz ticks (60e6 us / (bpm * 2^div) * 24) */
 {
-    uint32_t bpm = cur.bpm < 40u ? 40u : cur.bpm > 240u ? 240u : cur.bpm;
+    uint32_t bpm = bpm_get(&cur);
     return (60000000u / (bpm << cur.div)) * 24u;
 }
 
 static void update_eff(uint32_t dt)             /* dt: ticks since the last call */
 {
-    uint32_t p, mp = cur.morph_pos, beat_us = 60000000u / (cur.bpm < 40u ? 40u : cur.bpm), us;
+    uint32_t p, mp = cur.morph_pos, beat_us = 60000000u / bpm_get(&cur), us;
     dt += lfo_rem;
     us = dt / 24u;
     lfo_rem = dt - us * 24u;
@@ -437,10 +456,41 @@ static void pool_del(uint8_t *l, uint8_t *n, uint32_t note)
         }
 }
 
+/* Chords are built on the note that plays, from the degrees of the scale, so they are the scale's own chords (a triad
+ * from MAJOR is major or minor or diminished as the degree falls). The notes join in the order of CHORD: with POLY and
+ * HARMONY up, 2 notes are the root and its fifth, 3 a triad, 4 a seventh (or a ninth, or stacked fourths). */
+static const uint8_t NDEG[10] = {7, 7, 5, 5, 7, 7, 7, 7, 7, 7};                      /* notes in each scale before the octave */
+static const uint8_t CHORD[4][4] = {{0, 4, 2, 6}, {0, 4, 3, 6}, {0, 3, 6, 9}, {0, 4, 2, 8}};   /* STACK (thirds), SUS, QUART (fourths), ADD9: degrees above the root */
+static int32_t deg_semi(uint32_t sc, int32_t d)             /* the semitones above the root of scale degree d (negative: below) */
+{
+    int32_t n = NDEG[sc % 10u], o = d >= 0 ? d / n : -((-d + n - 1) / n);
+    return o * 12 + (int32_t)SCALE[sc % 10u][d - o * n];
+}
+static int32_t semi_deg(uint32_t sc, int32_t semi)          /* the scale degree at or just below semi (semitones above the root) */
+{
+    int32_t n = NDEG[sc % 10u], o = semi >= 0 ? semi / 12 : -((-semi + 11) / 12), pc = semi - o * 12, i, b = 0;
+    for (i = 0; i < n; i++) if ((int32_t)SCALE[sc % 10u][i] <= pc) b = i;
+    return o * n + b;
+}
+
+static void chord_build(uint32_t raw, uint32_t n, uint8_t *pl)       /* the chord of n notes (1..4) on raw: pl[0] is raw */
+{
+    int32_t d0 = semi_deg(cur.scale, (int32_t)raw - (int32_t)cur.root);
+    int open = fxs.voic == 2u || (fxs.voic == 0u && raw < 52u);                 /* OPEN: the third (and seventh) an octave up; AUTO: low down */
+    uint32_t k;
+    pl[0] = (uint8_t)raw;
+    for (k = 1; k < n; k++) {
+        int32_t pt = (int32_t)cur.root + deg_semi(cur.scale, d0 + (int32_t)CHORD[fxs.chord & 3u][k]);
+        if (open && fxs.chord != 3u && n >= 3u && (k == 2u || k == 3u)) pt += 12;      /* (ADD9 stays as it is: lifting the third would put it next to the ninth) */
+        pl[k] = (uint8_t)clampi(pt, 0, 127);
+    }
+}
+
 static void do_step(void)
 {
     int32_t e = (int32_t)(frozen ? frz_e[3] : eff[3]) - 127;
-    uint32_t ls = cstep, p, mp = cur.morph_pos, rest, legato, harm, chaos, gate_t, raw, ob, k, n, i;
+    uint32_t ls = cstep, p, mp = cur.morph_pos, rest, legato, harm, chaos, gate_t, raw, k, n, i;
+    int32_t shift = 0;
     const uint8_t *pool;
     uint8_t pn, pl[4];
     if (e >= -13 && e <= 13) ls = (ls + 1u) & 7u;                                   /* entropy: the play direction */
@@ -479,22 +529,54 @@ static void do_step(void)
     if (cur.mode == MODE_SEQ) raw = cur.sc[mp >= 128u].seq[ls];
     else if (pn) raw = pool[ls % pn];
     else raw = 48u + cur.root + SCALE[cur.scale][ls];
-    ob = raw >= cur.root ? ((raw - cur.root) / 12u) * 12u + cur.root : cur.root;
-    n = 1;
-    pl[0] = (uint8_t)raw;
-    if (cur.poly) {
-        n = harm > 63u ? (harm < 128u ? 2u : harm < 192u ? 3u : 4u) : 1u;
-        for (k = 1; k < n; k++) pl[k] = (uint8_t)(ob + SCALE[cur.scale][(ls + k * 2u) & 7u]);
-    }
+    n = cur.poly && harm > 63u ? (harm < 128u ? 2u : harm < 192u ? 3u : 4u) : 1u;   /* POLY: a chord on this note, in this scale */
+    chord_build(raw, n, pl);
+    if (chaos > 51u && rnd8() < chaos) shift = (rnd32() & 0x100u) ? 12 : -12;       /* chaos moves the whole chord an octave */
     for (k = 0; k < n; k++) {
-        int32_t pitch = (int32_t)pl[k] + cur.oct * 12 + cur.tr;
-        if (chaos > 51u && rnd8() < chaos) pitch += (rnd32() & 0x100u) ? 12 : -12;
+        int32_t pitch = (int32_t)pl[k] + cur.oct * 12 + cur.tr + shift;
         pitch = clampi(pitch, 0, 127);
         for (i = 0; i < 2u; i++) note_on(i, (uint32_t)pitch, gate_t);
     }
     hit_ticks = fm1_ticks();
     step_hit = ls;
     trail[ls] = 255;
+}
+
+/* AUTO A-B: the crossfader moves by itself, locked to the step clock: one trip from A to B takes 2^abars bars (4 beats each, whatever
+ * the step division). ONCE goes to the far end and rests; PING goes to and fro; SAW goes A to B and starts again from A. A hand on the
+ * crossfader, or a recalled preset, wins: the trip carries on from where it was put. It moves only while the sequencer runs. */
+static void auto_arm(void) { auto_rest = 0; auto_last = -1; auto_arming = 1; }   /* the next step takes the position as it is and picks the way */
+static void auto_step(void)
+{
+    uint32_t mode = fxs.amode, steps, inc, t;
+    int32_t np;
+    if (!mode || frozen) return;
+    if ((int32_t)cur.morph_pos != auto_last) {                          /* a new position: carry on from there */
+        auto_ph = (int32_t)(((uint32_t)cur.morph_pos << 16) / 255u);
+        if (auto_ph > 65535) auto_ph = 65535;
+        if (mode == 1u || auto_arming) auto_dir = auto_ph < 32768 ? 1 : -1;      /* ONCE, and a new start: towards the far end; a hand on PING keeps its way */
+        auto_arming = 0;
+        auto_rest = 0;
+    }
+    if (mode == 3u) auto_dir = 1;
+    if (mode == 1u && auto_rest) { auto_last = (int32_t)cur.morph_pos; return; }
+    steps = ((1u << fxs.abars) * 4u) << cur.div;                        /* steps in one trip: bars * 4 beats * steps a beat */
+    inc = 65536u / steps;
+    if (!inc) inc = 1;
+    np = auto_ph + (int32_t)auto_dir * (int32_t)inc;
+    if (np >= 65535) {
+        if (mode == 3u) np -= 65535;
+        else { np = 65535; if (mode == 1u) auto_rest = 1; else auto_dir = -1; }
+    } else if (np <= 0) {
+        np = 0;
+        if (mode == 1u) auto_rest = 1; else auto_dir = 1;
+    }
+    auto_ph = np;
+    t = (uint32_t)np;
+    if (fxs.ashp) { uint32_t t2 = (t * t) >> 16; t = (t2 * (196608u - 2u * t)) >> 16; if (t > 65535u) t = 65535u; }   /* EASE: smoothstep */
+    cur.morph_pos = (uint8_t)((t * 255u + 32768u) >> 16);
+    auto_last = (int32_t)cur.morph_pos;
+    weights();
 }
 
 static void transport(int on)
@@ -505,6 +587,7 @@ static void transport(int on)
         next_t = fm1_ticks();
         last_t = next_t;
         clk_next = next_t;
+        auto_arm();                                         /* (ONCE makes a new trip each time it plays) */
         if (fxs.sync) midi_send(0xFAu, 0, 0);               /* MIDI Start */
     } else if (!on && running) {
         running = 0;
@@ -598,12 +681,35 @@ static void bank_open(void)
     }
     bank_ok = 1;
 }
+static const uint8_t WHITE_KEY[16] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26};
+static const uint8_t BLACK_KEY[11] = {1, 3, 5, 8, 10, 13, 15, 17, 20, 22, 25};
+
+/* ---- LED flashes: the LED of what an action was about blinks for 0.8 s, as the plugin flashes its buttons */
+static uint32_t flash_until[41];
+static uint8_t flash_ty[41];
+static void flash(uint32_t id, uint32_t ty)     /* ty 1: a save (fast), 2: a recall (slow), 3: a copy, init or roll (fast, short) */
+{
+    if (id >= 41u) return;
+    flash_until[id] = fm1_ms + 800u;
+    flash_ty[id] = (uint8_t)ty;
+}
+static void led(uint32_t id, int on)            /* fm1_led_key, unless that LED is flashing */
+{
+    if (id < 41u && (int32_t)(flash_until[id] - fm1_ms) > 0) {
+        uint32_t t = flash_until[id] - fm1_ms;
+        on = flash_ty[id] == 2u ? (int)((t >> 7) & 1u) : flash_ty[id] == 3u ? (t > 400u && ((t >> 6) & 1u)) : (int)((t >> 6) & 1u);
+    }
+    fm1_led_key(id, on);
+}
+
 static void recall_apply(int32_t slot)          /* the engine calls it at the end of a measure */
 {
     if (slot < 0 || slot > 15 || !bank.p[slot].used) return;
     cur = bank.p[slot];
     rv_legacy(&cur);
     glob.slot = (uint8_t)slot;
+    flash(KEY_LED(WHITE_KEY[slot]), 2);
+    flash(BTN_SAVE, 2);
 }
 
 /* ================================================================== 6. the screen */
@@ -732,9 +838,12 @@ static void draw_globe(int32_t cx, int32_t cy)
     int32_t radius = 27, cy_ = (int32_t)cosine(gyaw), sy_ = (int32_t)sine(gyaw), ct = 30791, st = 11207;
     for (r = 0; r < 6u; r++) if (cur.lfo_rate[r] && cur.lfo_depth[r]) { lfo_on = 1; dsum += cur.lfo_depth[r]; }
     if (lfo_on) radius += ((sine(lfo_ph[0] ? lfo_ph[0] : lfo_ph[3]) >> 12) * (int32_t)(dsum > 255u ? 255u : dsum)) >> 11;
+    uint16_t rc[GR];                                                                /* a colour for each ring: the parallels from A's to B's, the meridians the groups' */
+    for (r = 0; r < 3u; r++) rc[r] = mixc(C_A, C_B, r * 127u);
+    rc[3] = TH.g[0]; rc[4] = TH.g[1]; rc[5] = TH.g[2]; rc[6] = TH.g[3]; rc[7] = C_A; rc[8] = C_B;
     for (r = 0; r < GR; r++) {
         int32_t px = 0, py = 0;
-        uint16_t base = r < 3u ? C_A : C_B;                                 /* the parallels: scene A's colour, the meridians: B's */
+        uint16_t c0 = rc[r], c1 = rc[(r + 1u) % GR], base;
         for (i = 0; i <= GP; i++) {
             uint32_t k = i & (GP - 1u);
             int32_t x = gx[r][k], y = gy[r][k], z = gz[r][k], x1, z1, y2, z2, sx, sy;
@@ -744,6 +853,7 @@ static void draw_globe(int32_t cx, int32_t cy)
             z2 = (y * st + z1 * ct) >> 15;
             sx = cx + ((x1 * radius) >> 15);
             sy = cy - ((y2 * radius) >> 15);
+            base = mixc(c0, c1, i * 255u / GP);                              /* ... and each ring runs into the next one's colour */
             if (i) cv_line(px, py, sx, sy, z2 > 9000 ? base : z2 > -9000 ? dimc(base, 150) : dimc(base, 70));
             px = sx; py = sy;
         }
@@ -787,7 +897,7 @@ static void draw_head(void)
     char s[40], *p = s;
     p = p_str(p, edit_sc ? "B " : "A ");
     p = p_str(p, cur.mode == MODE_ARP ? "ARP " : "SEQ ");
-    p = p_num(p, cur.bpm);
+    p = p_num(p, bpm_get(&cur));
     p = p_str(p, " BPM");
     if (latch) p = p_str(p, " LATCH");
     if (cur.poly) p = p_str(p, " POLY");
@@ -867,7 +977,7 @@ static void draw_foot(void)
 
 /* ---- the cells: what one knob controls on a page, how it reads, how it turns */
 enum { K_NONE, K_DENS, K_SWING, K_P, K_AB, K_INST, K_TIMB, K_DLY, K_LVL, K_LSPD, K_LDEP, K_BPM, K_STEP, K_TRANS,
-       K_THEME, K_ROOT, K_SCALE, K_CHA, K_CHB, K_RVA, K_RVB, K_RVS, K_RVT, K_DTM, K_DFB, K_DTN, K_SYNC };
+       K_THEME, K_ROOT, K_SCALE, K_CHA, K_CHB, K_RVA, K_RVB, K_RVS, K_RVT, K_DTM, K_DFB, K_DTN, K_SYNC, K_CHRD, K_VOIC, K_AMODE, K_ABARS, K_ASHP };
 typedef struct { uint8_t kind, arg; } cell_t;
 
 static const char *const PSHORT[6] = {"MORPH", "REST", "LEGATO", "ENTROP", "HARMNY", "CHAOS"};
@@ -877,6 +987,10 @@ static const char *const SCALE_SHORT[10] = {"MAJOR", "MINOR", "PENTMN", "PENTMJ"
                                             "MIXOLY", "HARMMN", "MELMN"};
 static const char *const DTM_NAME[4] = {"1/16", "1/8", "1/8.", "1/4"};
 static const char *const SYNC_NAME[3] = {"OFF", "START", "CLOCK"};
+static const char *const CHORD_NAME[4] = {"STACK", "SUS", "QUART", "ADD9"};
+static const char *const VOIC_NAME[3] = {"AUTO", "CLOSE", "OPEN"};
+static const char *const AMODE_NAME[4] = {"OFF", "ONCE", "PING", "SAW"};
+static const char *const ASHP_NAME[2] = {"LINEAR", "EASE"};
 
 static void cpy(char *d, const char *s) { *p_str(d, s) = 0; }
 static char *p_p100(char *p, uint32_t v255) { return p_num(p, (v255 * 100u + 127u) / 255u); }
@@ -912,7 +1026,7 @@ static void cell_text(cell_t c, char *name, char *val, int32_t *bar, uint32_t *s
         *p_p100(val, cur.lfo_depth[a6]) = 0;
         *bar = cur.lfo_depth[a6];
         break;
-    case K_BPM: cpy(name, "BPM"); *p_num(val, cur.bpm) = 0; break;
+    case K_BPM: cpy(name, "BPM"); *p_num(val, bpm_get(&cur)) = 0; break;
     case K_STEP: cpy(name, "STEP"); cpy(val, DIV_NAME[cur.div & 3u]); break;
     case K_TRANS: cpy(name, "TRANSP"); *p_sig(val, cur.tr) = 0; break;
     case K_THEME: cpy(name, "THEME"); cpy(val, TH.name); break;
@@ -928,6 +1042,11 @@ static void cell_text(cell_t c, char *name, char *val, int32_t *bar, uint32_t *s
     case K_DFB: cpy(name, "FDBK"); *p_p100(val, fxs.dfb) = 0; *bar = fxs.dfb; break;
     case K_DTN: cpy(name, "TONE"); *p_p100(val, fxs.dtone) = 0; *bar = fxs.dtone; break;
     case K_SYNC: cpy(name, "SYNC"); cpy(val, SYNC_NAME[fxs.sync % 3u]); break;
+    case K_CHRD: cpy(name, "CHORD"); cpy(val, CHORD_NAME[fxs.chord & 3u]); break;
+    case K_VOIC: cpy(name, "SPREAD"); cpy(val, VOIC_NAME[fxs.voic % 3u]); break;
+    case K_AMODE: cpy(name, "AUTO"); cpy(val, AMODE_NAME[fxs.amode & 3u]); break;
+    case K_ABARS: cpy(name, "BARS"); *p_num(val, 1u << (fxs.abars % 7u)) = 0; break;
+    case K_ASHP: cpy(name, "SHAPE"); cpy(val, ASHP_NAME[fxs.ashp & 1u]); break;
     default: break;
     }
 }
@@ -949,7 +1068,7 @@ static void cell_adj(cell_t c, int32_t d)       /* d: signed clicks, larger when
     case K_LVL: adj(&v->level, d, 3); break;
     case K_LSPD: cur.lfo_rate[c.arg % 6u] = (uint8_t)clampi((int32_t)cur.lfo_rate[c.arg % 6u] + sg, 0, 4); break;
     case K_LDEP: adj(&cur.lfo_depth[c.arg % 6u], d, 3); break;
-    case K_BPM: cur.bpm = (uint8_t)clampi((int32_t)cur.bpm + d, 40, 240); break;
+    case K_BPM: bpm_set(&cur, (int32_t)bpm_get(&cur) + d); break;
     case K_STEP: cur.div = (uint8_t)clampi((int32_t)cur.div + sg, 0, 3); break;
     case K_TRANS: cur.tr = (int8_t)clampi((int32_t)cur.tr + sg, -12, 12); break;
     case K_THEME: theme_set((uint32_t)((int32_t)glob.theme + (int32_t)NTHEME + sg) % NTHEME); break;
@@ -965,6 +1084,11 @@ static void cell_adj(cell_t c, int32_t d)       /* d: signed clicks, larger when
     case K_DFB: fxs.dfb = (uint8_t)clampi((int32_t)fxs.dfb + d * 3, 0, 230); break;
     case K_DTN: adj(&fxs.dtone, d, 3); break;
     case K_SYNC: fxs.sync = (uint8_t)clampi((int32_t)fxs.sync + sg, 0, 2); break;
+    case K_CHRD: fxs.chord = (uint8_t)clampi((int32_t)fxs.chord + sg, 0, 3); break;
+    case K_VOIC: fxs.voic = (uint8_t)clampi((int32_t)fxs.voic + sg, 0, 2); break;
+    case K_AMODE: fxs.amode = (uint8_t)clampi((int32_t)fxs.amode + sg, 0, 3); auto_arm(); break;
+    case K_ABARS: fxs.abars = (uint8_t)clampi((int32_t)fxs.abars + sg, 0, 6); break;
+    case K_ASHP: fxs.ashp = sg > 0 ? 1u : 0u; break;
     default: break;
     }
 }
@@ -1006,7 +1130,8 @@ static const half_t HALF[] = {
     {G_LFO, 0, "HARMONY CHAOS", {{K_LSPD, 4}, {K_LDEP, 4}, {K_LSPD, 5}, {K_LDEP, 5}}},
     {G_GLO, 0, "TEMPO KEY", {{K_BPM, 0}, {K_STEP, 0}, {K_TRANS, 0}, {K_THEME, 0}}},
     {G_GLO, 1, "SCALE MIDI", {{K_ROOT, 0}, {K_SCALE, 0}, {K_CHA, 0}, {K_CHB, 0}}},
-    {G_GLO, 0, "MIDI SYNC OUT", {{K_SYNC, 0}, {K_NONE, 0}, {K_NONE, 0}, {K_NONE, 0}}},
+    {G_GLO, 0, "CHORD SYNC", {{K_CHRD, 0}, {K_VOIC, 0}, {K_SYNC, 0}, {K_NONE, 0}}},
+    {G_GLO, 0, "AUTO A-B", {{K_AMODE, 0}, {K_ABARS, 0}, {K_ASHP, 0}, {K_NONE, 0}}},
 };
 #define NHALF ((int32_t)(sizeof HALF / sizeof HALF[0]))
 static int32_t cur_half = -1;                   /* -1: the performance screen */
@@ -1189,7 +1314,7 @@ static void draw_tick(void)
         if (view == V_PERF) {
             char hs[8];
             hs[0] = (char)(edit_sc + 1u); hs[1] = (char)(cur.mode + 1u); hs[2] = (char)(latch + 1u);
-            hs[3] = (char)(cur.poly + 1u + 2u * auto_roll); hs[4] = (char)(frozen + 1u); hs[5] = (char)(cur.bpm);
+            hs[3] = (char)(cur.poly + 1u + 2u * auto_roll); hs[4] = (char)(frozen + 1u + 2u * (bpm_get(&cur) >> 8)); hs[5] = (char)(bpm_get(&cur) & 255u);
             hs[6] = (char)(1u + glob.theme); hs[7] = 0;
             if (memcmp(head_cache, hs, 7) != 0) { memcpy(head_cache, hs, 8); draw_head(); return; }
         } else {
@@ -1244,8 +1369,6 @@ static void draw_tick(void)
 }
 
 /* ================================================================== 7. the controls and the main loop */
-static const uint8_t WHITE_KEY[16] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26};
-static const uint8_t BLACK_KEY[11] = {1, 3, 5, 8, 10, 13, 15, 17, 20, 22, 25};
 #define KEY0 53u                                /* key 0 = F3 */
 
 static void roll(void)                          /* randomise the scene the knobs edit */
@@ -1264,20 +1387,23 @@ static void roll(void)                          /* randomise the scene the knobs
 static void do_copy(void)
 {
     switch (copy_act & 3u) {
-    case 0: cur.sc[1] = cur.sc[0]; hud("COPIED", "A TO B", -1); break;
-    case 1: cur.sc[0] = cur.sc[1]; hud("COPIED", "B TO A", -1); break;
-    case 2: scene_init(&cur.sc[edit_sc], (int)edit_sc); hud("INIT", edit_sc ? "SCENE B" : "SCENE A", -1); break;
-    default: preset_init(&cur); hud("INIT", "ALL", -1); break;
+    case 0: cur.sc[1] = cur.sc[0]; hud("COPIED", "A TO B", -1); flash(KEY_LED(BLACK_KEY[8]), 3); flash(KEY_LED(BLACK_KEY[9]), 3); break;
+    case 1: cur.sc[0] = cur.sc[1]; hud("COPIED", "B TO A", -1); flash(KEY_LED(BLACK_KEY[8]), 3); flash(KEY_LED(BLACK_KEY[9]), 3); break;
+    case 2: scene_init(&cur.sc[edit_sc], (int)edit_sc); hud("INIT", edit_sc ? "SCENE B" : "SCENE A", -1); flash(KEY_LED(BLACK_KEY[8 + edit_sc]), 3); break;
+    default: preset_init(&cur); hud("INIT", "ALL", -1); flash(KEY_LED(BLACK_KEY[8]), 3); flash(KEY_LED(BLACK_KEY[9]), 3); break;
     }
+    flash(BTN_SAVE, 3);
 }
 
 static void save_slot(uint32_t slot)
 {
     bank_open();
     bank.p[slot] = cur;
-    bank.p[slot].used = 1;
+    bank.p[slot].used |= 1u;                    /* (the other bits of used are the tempo's) */
     glob.slot = (uint8_t)slot;
     bank_save();
+    flash(KEY_LED(WHITE_KEY[slot]), 1);
+    flash(BTN_SAVE, 1);
 }
 
 static void select_view(void)
@@ -1298,30 +1424,30 @@ static void leds(uint32_t lit_notes)
 {
     uint32_t i, blink = (fm1_ms >> 8) & 1u, slots = save_mode || recall_mode;
     int32_t g = cur_half >= 0 ? (int32_t)HALF[cur_half].group : -1;
-    fm1_led_key(BTN_ARP, cur.mode == MODE_ARP);
-    fm1_led_key(BTN_SEQ, cur.mode == MODE_SEQ);
-    fm1_led_key(BTN_SEL, cur.poly);
-    fm1_led_key(BTN_REC, frozen);
-    fm1_led_key(BTN_PLAY, running);
-    fm1_led_key(BTN_EDIT, auto_roll);
-    fm1_led_key(BTN_FX, g == G_FX);
-    fm1_led_key(BTN_LFO, g == G_LFO);
-    fm1_led_key(BTN_GLO, g == G_GLO);
-    fm1_led_key(BTN_HOME, g < 0 || g == G_HOME);
-    fm1_led_key(BTN_SAVE, save_mode ? blink : recall_mode);
-    fm1_led_key(BTN_OCT_DOWN, cur.oct < 0);
-    fm1_led_key(BTN_OCT_UP, cur.oct > 0);
+    led(BTN_ARP, cur.mode == MODE_ARP);
+    led(BTN_SEQ, cur.mode == MODE_SEQ);
+    led(BTN_SEL, cur.poly);
+    led(BTN_REC, frozen);
+    led(BTN_PLAY, running);
+    led(BTN_EDIT, auto_roll);
+    led(BTN_FX, g == G_FX);
+    led(BTN_LFO, g == G_LFO);
+    led(BTN_GLO, g == G_GLO);
+    led(BTN_HOME, g < 0 || g == G_HOME);
+    led(BTN_SAVE, save_mode ? blink : recall_mode);
+    led(BTN_OCT_DOWN, cur.oct < 0);
+    led(BTN_OCT_UP, cur.oct > 0);
     for (i = 0; i < 16u; i++) {
         int on = slots ? (bank.p[i].used != 0 && (i != glob.slot || blink)) : (int)((lit_notes >> WHITE_KEY[i]) & 1u);
-        fm1_led_key(KEY_LED(WHITE_KEY[i]), on);
+        led(KEY_LED(WHITE_KEY[i]), on);
     }
     for (i = 0; i < 8u; i++) {
         int on = running && cstep == i ? 1 : (cur.sc[edit_sc].fader[i] > 127u) && !((mute_mask >> i) & 1u);
-        fm1_led_key(KEY_LED(BLACK_KEY[i]), on);
+        led(KEY_LED(BLACK_KEY[i]), on);
     }
-    fm1_led_key(KEY_LED(BLACK_KEY[8]), edit_sc == 0);
-    fm1_led_key(KEY_LED(BLACK_KEY[9]), edit_sc == 1);
-    fm1_led_key(KEY_LED(BLACK_KEY[10]), mute_mask != 0);
+    led(KEY_LED(BLACK_KEY[8]), edit_sc == 0);
+    led(KEY_LED(BLACK_KEY[9]), edit_sc == 1);
+    led(KEY_LED(BLACK_KEY[10]), mute_mask != 0);
 }
 
 static saved3_t sv;
@@ -1335,7 +1461,10 @@ static void app_init(void)
     if (!rng_s) rng_s = 1;
     memset(&sv, 0, sizeof sv);
     if (settings_load(&sv, sizeof sv) == 0) {
-        fxs.dtime = sv.fx[0] & 3u; fxs.dfb = sv.fx[1] > 230u ? 230u : sv.fx[1]; fxs.dtone = sv.fx[2]; fxs.sync = sv.fx[3] > 2u ? 2u : sv.fx[3];
+        fxs.dtime = sv.fx[0] & 3u; fxs.amode = (sv.fx[0] >> 2) & 3u; fxs.ashp = (sv.fx[0] >> 4) & 1u; fxs.abars = (sv.fx[0] >> 5) & 7u;
+        if (fxs.abars > 6u || !(sv.fx[0] & ~3u)) fxs.abars = 2;       /* (a record from before AUTO: its default, 4 bars) */
+        fxs.dfb = sv.fx[1] > 230u ? 230u : sv.fx[1]; fxs.dtone = sv.fx[2];
+        fxs.sync = (sv.fx[3] & 3u) > 2u ? 2u : (sv.fx[3] & 3u); fxs.chord = (sv.fx[3] >> 2) & 3u; fxs.voic = (sv.fx[3] >> 4) & 3u; if (fxs.voic > 2u) fxs.voic = 0;
     } else {                                                    /* (an older record: without the delay and sync bytes, ...) */
         saved2_t o2;
         saved1b_t o1;
@@ -1347,7 +1476,7 @@ static void app_init(void)
     bt_init(sv.bt);
     if (sv.s.ver == 1u) {
         cur = sv.s.cur; rv_legacy(&cur); glob.theme = sv.s.theme % NTHEME; glob.ch[0] = sv.s.ch0 & 15u; glob.ch[1] = sv.s.ch1 & 15u; glob.slot = sv.s.slot & 15u;
-        cur.bpm = (uint8_t)clampi(cur.bpm, 40, 240);
+        bpm_set(&cur, (int32_t)bpm_get(&cur));
         cur.div &= 3u; cur.scale %= 10u; cur.root %= 12u; cur.oct = (int8_t)clampi(cur.oct, -3, 3);
         cur.tr = (int8_t)clampi(cur.tr, -12, 12);
         theme_set(glob.theme);
@@ -1380,11 +1509,12 @@ static void app_step(void)                      /* one pass of the main loop (a 
     if (running && (int32_t)(now - next_t) >= 0) {
         uint32_t base = step_ticks(), sw = (base >> 8) * (((uint32_t)cur.swing * 115u) >> 8);
         do_step();
+        auto_step();                                                  /* AUTO A-B: one step of the trip, on the clock */
         next_t += (cstep & 1u) ? base - sw : base + sw;      /* (cstep is the step that just played: even steps are late) */
-        if ((int32_t)(now - next_t) > (int32_t)(base * 4u)) next_t = now + base;
+        if ((int32_t)(now - next_t) > (int32_t)(base > 0x1FFFFFFFu ? 0x7FFFFFFFu : base * 4u)) next_t = now + base;   /* (base is up to 1.44e9 at 1 BPM) */
     }
     if (running && fxs.sync == 2u) {                                                /* MIDI clock: 24 a beat = one every 60e6 / bpm ticks */
-        uint32_t per = 60000000u / (cur.bpm < 40u ? 40u : cur.bpm), guard = 0;
+        uint32_t per = 60000000u / bpm_get(&cur), guard = 0;
         while ((int32_t)(now - clk_next) >= 0 && guard++ < 4u) { midi_send(0xF8u, 0, 0); clk_next += per; }
         if ((int32_t)(now - clk_next) > 0) clk_next = now + per;                    /* far behind (a stall): start the grid again */
     }
@@ -1473,7 +1603,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
         hud_btn("AUTO ROLL", auto_roll ? "ON" : "OFF", BTN_EDIT);
     }
     if (rel & (1u << BTN_EDIT)) {
-        if (edit_down && !edit_long) { roll(); hud("RANDOMISED", edit_sc ? "SCENE B" : "SCENE A", -1); hud_scn = (uint8_t)(edit_sc + 1u); dirty = 1; t_change = fm1_ms; }
+        if (edit_down && !edit_long) { roll(); flash(KEY_LED(BLACK_KEY[8 + edit_sc]), 3); flash(BTN_EDIT, 3); hud("RANDOMISED", edit_sc ? "SCENE B" : "SCENE A", -1); hud_scn = (uint8_t)(edit_sc + 1u); dirty = 1; t_change = fm1_ms; }
         edit_down = 0;
     }
     if (b & ((1u << BTN_FX) | (1u << BTN_LFO) | (1u << BTN_GLO) | (1u << BTN_HOME))) { tr_view = 0; menu_pg = 0; hud_until = 0; page_auto = 0; }
@@ -1577,7 +1707,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
     if (page_auto && fm1_ms - pg_t0 > 1800u) { page_auto = 0; if (cur_half == 1) cur_half = -1; }   /* the page a knob opened closes by itself */
     { static uint32_t t_dsp; if (fm1_ms - t_dsp >= 500u) { uint32_t m = dsp_max; dsp_max = 0; t_dsp = fm1_ms; dsp_pct = m / 1392u; } }   /* % of one 5.8 ms block = 139200 ticks; under 50 is comfortable (docs/RULES.md) */
     weights();
-    { uint32_t bpm = cur.bpm < 40u ? 40u : cur.bpm; dly_len = (int32_t)clampi((int32_t)(DT_K[fxs.dtime & 3u] / bpm), 1000, 65000); }
+    { uint32_t bpm = bpm_get(&cur); dly_len = (int32_t)clampi((int32_t)(DT_K[fxs.dtime & 3u] / bpm), 1000, 65000); }
     select_view();
     if (fm1_ms - t_ui >= 12u) { t_ui = fm1_ms; leds(lit); }
     draw_tick();
@@ -1585,7 +1715,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
     if (bt_kept(sv.bt)) { dirty = 1; t_change = fm1_ms; }                       /* the radio's address and trims copy: saved with the settings */
     if (dirty && !busy && fm1_ms - t_change > 2000u) {                          /* save when silent: an erase stalls the sound */
         sv.s.cur = cur; sv.s.ver = 1; sv.s.theme = glob.theme; sv.s.ch0 = glob.ch[0]; sv.s.ch1 = glob.ch[1]; sv.s.slot = glob.slot;
-        sv.fx[0] = fxs.dtime; sv.fx[1] = fxs.dfb; sv.fx[2] = fxs.dtone; sv.fx[3] = fxs.sync;
+        sv.fx[0] = (uint8_t)(fxs.dtime | fxs.amode << 2 | fxs.ashp << 4 | fxs.abars << 5); sv.fx[1] = fxs.dfb; sv.fx[2] = fxs.dtone; sv.fx[3] = (uint8_t)(fxs.sync | fxs.chord << 2 | fxs.voic << 4);
         settings_save(&sv, sizeof sv);
         dirty = 0;
     }
