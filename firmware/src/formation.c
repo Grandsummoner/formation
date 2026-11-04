@@ -62,7 +62,9 @@ enum { INST_MIDI = 0, INST_ANALOG, INST_FM, INST_SAW, INST_PULSE, INST_EPIANO, I
        INST_PAD, INST_BRASS, NINST };
 
 /* what is not in a preset: the delay's character and the MIDI sync out */
-static struct { uint8_t dtime, dfb, dtone, sync, chord, voic, amode, abars, ashp; } fxs = {2, 100, 255, 2, 0, 0, 0, 2, 0};   /* amode: AUTO A-B off / once / ping-pong / saw; abars: 2^abars bars a trip; ashp: linear / ease */   /* delay time (1/16 1/8 1/8. 1/4), feedback, tone; SYNC OUT: 0 off, 1 start/stop, 2 + clock; the chord type and its voicing */
+static struct { uint8_t dtime, dfb, dtone, sync, chord, voic, amode, abars, ashp, csrc; } fxs = {2, 100, 255, 2, 0, 0, 0, 2, 0, 0};   /* csrc: the clock: 0 internal, 1 external, 2 auto */
+/* dtime, dfb, dtone: the delay (time 1/16 1/8 1/8. 1/4, feedback, tone); sync: SYNC OUT 0 off, 1 start/stop, 2 + clock; chord, voic: the chord type and its voicing;
+ * amode, abars, ashp: AUTO A-B (off / once / ping-pong / saw; 2^abars bars a trip; linear / ease); csrc: the clock (internal / external / auto) */
 static const uint32_t DT_K[4] = {661500u, 1323000u, 1984500u, 2646000u};   /* 44100 * 60 * (1/4 1/2 3/4 1 beat): the delay in samples = K / bpm */
 
 static preset_t cur;                            /* the state you play */
@@ -579,6 +581,33 @@ static void auto_step(void)
     weights();
 }
 
+/* ---- the external MIDI clock. With CLOCK at EXT (or AUTO, while a clock is coming in) the steps are driven by the 24-a-beat clock
+ * that arrives on USB or Bluetooth, Start / Continue / Stop run the sequencer, and the BPM follows the clock (also what the delay and
+ * the LFOs go by). The clock and transport bytes do not go to the ring midi_get reads: the interrupt that reads them (the app_midi_rt
+ * hook) queues them here with the time they came, and ext_poll takes them in the main loop. While Formation follows, it sends no
+ * clock or Start / Stop of its own. */
+#ifndef RING_PUBLISH
+#define RING_PUBLISH() ((void)0)                           /* (on the host and in the browser there is no interrupt to order against) */
+#endif
+static volatile uint32_t xc_t[32], xc_w, xc_r;
+static volatile uint8_t xc_c[32];                       /* 0 a tick, 1 Start, 2 Continue, 3 Stop */
+static uint32_t xc_last, xc_per, xc_wt0, xc_wn, xc_n, xc_stepno, xc_step_t;
+static uint8_t xc_seen, xc_run, xc_pend, xc_follow, xc_cont;
+
+static int app_midi_rt(uint32_t pkt)                    /* an interrupt (USB / Bluetooth input): 1 = taken, it does not go in the ring */
+{
+    uint32_t st = (pkt >> 8) & 0xFFu, c;
+    if ((pkt & 15u) != 0xFu) return 0;
+    if (st == 0xF8u) c = 0; else if (st == 0xFAu) c = 1; else if (st == 0xFBu) c = 2; else if (st == 0xFCu) c = 3; else return 0;
+    if (xc_w - xc_r < 32u) {
+        xc_t[xc_w & 31u] = fm1_ticks();
+        xc_c[xc_w & 31u] = (uint8_t)c;
+        RING_PUBLISH();
+        xc_w++;
+    }
+    return 1;
+}
+
 static void transport(int on)
 {
     if (on && !running) {
@@ -588,13 +617,66 @@ static void transport(int on)
         last_t = next_t;
         clk_next = next_t;
         auto_arm();                                         /* (ONCE makes a new trip each time it plays) */
-        if (fxs.sync) midi_send(0xFAu, 0, 0);               /* MIDI Start */
+        if (xc_follow) { xc_run = 1; xc_pend = 0; if (!xc_cont) { xc_n = 0; xc_stepno = 0; } }   /* following: the steps come with the next ticks */
+        if (fxs.sync && !xc_follow) midi_send(0xFAu, 0, 0);               /* MIDI Start */
     } else if (!on && running) {
         running = 0;
         offs_run(0, 1);
         voices_off();
-        if (fxs.sync) midi_send(0xFCu, 0, 0);               /* MIDI Stop */
+        xc_run = 0; xc_pend = 0;
+        if (fxs.sync && !xc_follow) midi_send(0xFCu, 0, 0);               /* MIDI Stop */
     }
+}
+
+static void ext_poll(uint32_t now)                      /* the main loop: the clock and transport that came in, who is the master, the tempo */
+{
+    uint32_t mode = fxs.csrc, tps = 24u >> (cur.div & 3u), to, follow;
+    while (xc_r != xc_w) {
+        uint32_t t = xc_t[xc_r & 31u], c = xc_c[xc_r & 31u];
+        xc_r++;
+        if (!mode) continue;                                                        /* INT: what comes in is ignored */
+        if (c == 0) {                                                               /* a tick */
+            to = xc_per * 4u > 7200000u ? xc_per * 4u : 7200000u;
+            if (xc_seen && (int32_t)(t - xc_last) > (int32_t)to) xc_wn = 0;         /* it had gone: measure the tempo again */
+            xc_last = t; xc_seen = 1;
+            if (!xc_wn) xc_wt0 = t;                                                 /* the tempo: 24 ticks (a beat) apart, then low-passed */
+            xc_wn++;
+            if (xc_wn > 24u) {
+                uint32_t np = (t - xc_wt0) / 24u;
+                if (np >= 24000u && np < 24000000u) xc_per = xc_per ? (xc_per * 3u + np) / 4u : np;      /* a tick every 1 ms .. 1 s */
+                xc_wt0 = t; xc_wn = 1;
+            }
+            if (xc_run && running) {
+                if (xc_n % tps == 0) {                                              /* a step: on the beat grid, odd ones late by the swing */
+                    uint32_t sl = xc_per * tps, sw = (sl >> 8) * (((uint32_t)cur.swing * 115u) >> 8);
+                    if (xc_pend) { do_step(); auto_step(); }                        /* (the last one was still waiting: it goes now) */
+                    xc_step_t = t + ((xc_stepno & 1u) ? sw : 0u);
+                    xc_stepno++;
+                    xc_pend = 1;
+                }
+                xc_n++;
+            }
+        } else {                                                                    /* Start, Continue, Stop: the clock is the master now */
+            xc_follow = 1;
+            xc_seen = 1; xc_last = t;
+            if (c == 1u) {
+                if (!running) transport(1);
+                cstep = 7; fwd = 1; xc_n = 0; xc_stepno = 0; xc_pend = 0; xc_run = 1; xc_wn = 0; auto_arm();
+            } else if (c == 2u) {
+                if (!running) { uint8_t cs = cstep, fw = fwd; xc_cont = 1; transport(1); xc_cont = 0; cstep = cs; fwd = fw; }
+                xc_run = 1;
+            } else {
+                xc_run = 0; xc_pend = 0;
+                if (running) transport(0);
+            }
+        }
+    }
+    to = xc_per * 4u > 7200000u ? xc_per * 4u : 7200000u;                           /* a clock that has not ticked for 300 ms (or 4 ticks) is gone */
+    follow = mode == 1u || (mode == 2u && xc_seen && (int32_t)(now - xc_last) < (int32_t)to);
+    if (follow && !xc_follow) { xc_run = running; xc_n = 0; xc_stepno = 0; xc_pend = 0; }
+    if (!follow && xc_follow) { xc_run = 0; xc_pend = 0; next_t = now; }            /* back on the internal clock, at the tempo it had */
+    xc_follow = (uint8_t)follow;
+    if (follow && xc_per) bpm_set(&cur, (int32_t)((60000000u + xc_per / 2u) / xc_per));   /* BPM = 60e6 / ticks a clock tick; the beat is 24 of them */
 }
 
 static void freeze_set(int on)
@@ -962,6 +1044,7 @@ static void draw_foot(void)
         p = p_sig(p, cur.oct);
         p = p_str(p, "  ");
         p = p_str(p, TH.name);
+        if (xc_follow) p = p_str(p, "  EXT");                 /* the steps follow an external MIDI clock */
         if (bt_state() == BT_READY) p = p_str(p, "  BT");    /* a Bluetooth central is connected and listening */
         *p = 0;
         draw_text_box(8, 204, 224, &FONT_S, s, GCOL(G_GLO), 0);
@@ -977,7 +1060,7 @@ static void draw_foot(void)
 
 /* ---- the cells: what one knob controls on a page, how it reads, how it turns */
 enum { K_NONE, K_DENS, K_SWING, K_P, K_AB, K_INST, K_TIMB, K_DLY, K_LVL, K_LSPD, K_LDEP, K_BPM, K_STEP, K_TRANS,
-       K_THEME, K_ROOT, K_SCALE, K_CHA, K_CHB, K_RVA, K_RVB, K_RVS, K_RVT, K_DTM, K_DFB, K_DTN, K_SYNC, K_CHRD, K_VOIC, K_AMODE, K_ABARS, K_ASHP };
+       K_THEME, K_ROOT, K_SCALE, K_CHA, K_CHB, K_RVA, K_RVB, K_RVS, K_RVT, K_DTM, K_DFB, K_DTN, K_SYNC, K_CHRD, K_VOIC, K_AMODE, K_ABARS, K_ASHP, K_CSRC };
 typedef struct { uint8_t kind, arg; } cell_t;
 
 static const char *const PSHORT[6] = {"MORPH", "REST", "LEGATO", "ENTROP", "HARMNY", "CHAOS"};
@@ -989,6 +1072,7 @@ static const char *const DTM_NAME[4] = {"1/16", "1/8", "1/8.", "1/4"};
 static const char *const SYNC_NAME[3] = {"OFF", "START", "CLOCK"};
 static const char *const CHORD_NAME[4] = {"STACK", "SUS", "QUART", "ADD9"};
 static const char *const VOIC_NAME[3] = {"AUTO", "CLOSE", "OPEN"};
+static const char *const CSRC_NAME[3] = {"INT", "EXT", "AUTO"};
 static const char *const AMODE_NAME[4] = {"OFF", "ONCE", "PING", "SAW"};
 static const char *const ASHP_NAME[2] = {"LINEAR", "EASE"};
 
@@ -1044,6 +1128,7 @@ static void cell_text(cell_t c, char *name, char *val, int32_t *bar, uint32_t *s
     case K_SYNC: cpy(name, "SYNC"); cpy(val, SYNC_NAME[fxs.sync % 3u]); break;
     case K_CHRD: cpy(name, "CHORD"); cpy(val, CHORD_NAME[fxs.chord & 3u]); break;
     case K_VOIC: cpy(name, "SPREAD"); cpy(val, VOIC_NAME[fxs.voic % 3u]); break;
+    case K_CSRC: cpy(name, "CLOCK"); cpy(val, CSRC_NAME[fxs.csrc % 3u]); break;
     case K_AMODE: cpy(name, "AUTO"); cpy(val, AMODE_NAME[fxs.amode & 3u]); break;
     case K_ABARS: cpy(name, "BARS"); *p_num(val, 1u << (fxs.abars % 7u)) = 0; break;
     case K_ASHP: cpy(name, "SHAPE"); cpy(val, ASHP_NAME[fxs.ashp & 1u]); break;
@@ -1086,6 +1171,7 @@ static void cell_adj(cell_t c, int32_t d)       /* d: signed clicks, larger when
     case K_SYNC: fxs.sync = (uint8_t)clampi((int32_t)fxs.sync + sg, 0, 2); break;
     case K_CHRD: fxs.chord = (uint8_t)clampi((int32_t)fxs.chord + sg, 0, 3); break;
     case K_VOIC: fxs.voic = (uint8_t)clampi((int32_t)fxs.voic + sg, 0, 2); break;
+    case K_CSRC: fxs.csrc = (uint8_t)clampi((int32_t)fxs.csrc + sg, 0, 2); break;
     case K_AMODE: fxs.amode = (uint8_t)clampi((int32_t)fxs.amode + sg, 0, 3); auto_arm(); break;
     case K_ABARS: fxs.abars = (uint8_t)clampi((int32_t)fxs.abars + sg, 0, 6); break;
     case K_ASHP: fxs.ashp = sg > 0 ? 1u : 0u; break;
@@ -1130,7 +1216,7 @@ static const half_t HALF[] = {
     {G_LFO, 0, "HARMONY CHAOS", {{K_LSPD, 4}, {K_LDEP, 4}, {K_LSPD, 5}, {K_LDEP, 5}}},
     {G_GLO, 0, "TEMPO KEY", {{K_BPM, 0}, {K_STEP, 0}, {K_TRANS, 0}, {K_THEME, 0}}},
     {G_GLO, 1, "SCALE MIDI", {{K_ROOT, 0}, {K_SCALE, 0}, {K_CHA, 0}, {K_CHB, 0}}},
-    {G_GLO, 0, "CHORD SYNC", {{K_CHRD, 0}, {K_VOIC, 0}, {K_SYNC, 0}, {K_NONE, 0}}},
+    {G_GLO, 0, "CHORD SYNC", {{K_CHRD, 0}, {K_VOIC, 0}, {K_SYNC, 0}, {K_CSRC, 0}}},
     {G_GLO, 0, "AUTO A-B", {{K_AMODE, 0}, {K_ABARS, 0}, {K_ASHP, 0}, {K_NONE, 0}}},
 };
 #define NHALF ((int32_t)(sizeof HALF / sizeof HALF[0]))
@@ -1310,6 +1396,7 @@ static void draw_tick(void)
         uint32_t m = sig_of(&cur.morph_pos, 1) ^ ((uint32_t)edit_sc << 8) ^ ((uint32_t)mute_mask << 12) ^ sig_of(cur.lfo_rate, 12) ^ ((uint32_t)glob.theme << 20);
         uint32_t f = sig_of(&cur.density, 2) ^ ((uint32_t)cur.oct << 16) ^ ((uint32_t)glob.theme << 24);
         f = f * 3u + (bt_state() == BT_READY);
+        f = f * 3u + xc_follow;
         f = f * 31u + (fm1_ms < hud_until ? sig_str(hud_name) + sig_str(hud_val) * 3u + hud_scn + 1u : 0u);   /* a message shows and goes */
         if (view == V_PERF) {
             char hs[8];
@@ -1465,6 +1552,7 @@ static void app_init(void)
         if (fxs.abars > 6u || !(sv.fx[0] & ~3u)) fxs.abars = 2;       /* (a record from before AUTO: its default, 4 bars) */
         fxs.dfb = sv.fx[1] > 230u ? 230u : sv.fx[1]; fxs.dtone = sv.fx[2];
         fxs.sync = (sv.fx[3] & 3u) > 2u ? 2u : (sv.fx[3] & 3u); fxs.chord = (sv.fx[3] >> 2) & 3u; fxs.voic = (sv.fx[3] >> 4) & 3u; if (fxs.voic > 2u) fxs.voic = 0;
+        fxs.csrc = (sv.fx[3] >> 6) & 3u; if (fxs.csrc > 2u) fxs.csrc = 0;
     } else {                                                    /* (an older record: without the delay and sync bytes, ...) */
         saved2_t o2;
         saved1b_t o1;
@@ -1506,14 +1594,17 @@ static void app_step(void)                      /* one pass of the main loop (a 
     update_eff(now - last_t);
     last_t = now;
     offs_run(now, 0);
-    if (running && (int32_t)(now - next_t) >= 0) {
+    ext_poll(now);
+    if (running && xc_follow) {                                                     /* following an external clock: the step comes at its tick */
+        if (xc_pend && (int32_t)(now - xc_step_t) >= 0) { xc_pend = 0; do_step(); auto_step(); }
+    } else if (running && (int32_t)(now - next_t) >= 0) {
         uint32_t base = step_ticks(), sw = (base >> 8) * (((uint32_t)cur.swing * 115u) >> 8);
         do_step();
         auto_step();                                                  /* AUTO A-B: one step of the trip, on the clock */
         next_t += (cstep & 1u) ? base - sw : base + sw;      /* (cstep is the step that just played: even steps are late) */
         if ((int32_t)(now - next_t) > (int32_t)(base > 0x1FFFFFFFu ? 0x7FFFFFFFu : base * 4u)) next_t = now + base;   /* (base is up to 1.44e9 at 1 BPM) */
     }
-    if (running && fxs.sync == 2u) {                                                /* MIDI clock: 24 a beat = one every 60e6 / bpm ticks */
+    if (running && fxs.sync == 2u && !xc_follow) {                                  /* MIDI clock: 24 a beat = one every 60e6 / bpm ticks */
         uint32_t per = 60000000u / bpm_get(&cur), guard = 0;
         while ((int32_t)(now - clk_next) >= 0 && guard++ < 4u) { midi_send(0xF8u, 0, 0); clk_next += per; }
         if ((int32_t)(now - clk_next) > 0) clk_next = now + per;                    /* far behind (a stall): start the grid again */
@@ -1715,7 +1806,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
     if (bt_kept(sv.bt)) { dirty = 1; t_change = fm1_ms; }                       /* the radio's address and trims copy: saved with the settings */
     if (dirty && !busy && fm1_ms - t_change > 2000u) {                          /* save when silent: an erase stalls the sound */
         sv.s.cur = cur; sv.s.ver = 1; sv.s.theme = glob.theme; sv.s.ch0 = glob.ch[0]; sv.s.ch1 = glob.ch[1]; sv.s.slot = glob.slot;
-        sv.fx[0] = (uint8_t)(fxs.dtime | fxs.amode << 2 | fxs.ashp << 4 | fxs.abars << 5); sv.fx[1] = fxs.dfb; sv.fx[2] = fxs.dtone; sv.fx[3] = (uint8_t)(fxs.sync | fxs.chord << 2 | fxs.voic << 4);
+        sv.fx[0] = (uint8_t)(fxs.dtime | fxs.amode << 2 | fxs.ashp << 4 | fxs.abars << 5); sv.fx[1] = fxs.dfb; sv.fx[2] = fxs.dtone; sv.fx[3] = (uint8_t)(fxs.sync | fxs.chord << 2 | fxs.voic << 4 | fxs.csrc << 6);
         settings_save(&sv, sizeof sv);
         dirty = 0;
     }

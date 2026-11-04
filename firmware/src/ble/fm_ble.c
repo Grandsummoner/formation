@@ -117,6 +117,8 @@ BLE_API void ble_app_peer_id(const uint8_t irk[16], const uint8_t addr[6], uint8
 
 static int bt_ring_in(uint32_t pkt)             /* TIMER5: into usb.c's MIDI-in ring (what midi_get reads) -> 1 taken */
 {
+    if ((pkt & 15u) == 0xFu && app_midi_rt(pkt))    /* the clock and transport: the app times them (the time here is TIMER5's tick) */
+        return 1;
     if (mi_w - mi_r >= MQ)
         return 0;
     midi_in_q[mi_w % MQ] = pkt;

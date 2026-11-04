@@ -1,0 +1,166 @@
+# Formation host test: the external MIDI clock. CLOCK is set to EXT (GLO page 3, knob 4); nothing plays until MIDI Start; then the steps follow
+# the 24-a-beat clock that comes in (120 BPM, 1/16 steps: one every 125 ms); the BPM shown follows it; MIDI Stop stops it; no clock goes out.
+# buttons: 7 GLO 8 HOME 12 PLAY   encoders: 5 KNOB4   keys 0x91: a chord   (input starts after the 1.2 s splash)
+1300 btn 7
+1320 btnup 7
+1340 btn 7
+1360 btnup 7
+1380 btn 7
+1400 btnup 7
+1500 enc 5 1
+1600 btn 8
+1620 btnup 8
+1700 keys 0x91
+1800 btn 12
+1820 btnup 12
+1840 btn 12
+1860 btnup 12
+2200 midi 0xFA 0 0
+2200 midi 0xF8 0 0
+2221 midi 0xF8 0 0
+2242 midi 0xF8 0 0
+2262 midi 0xF8 0 0
+2283 midi 0xF8 0 0
+2304 midi 0xF8 0 0
+2325 midi 0xF8 0 0
+2346 midi 0xF8 0 0
+2367 midi 0xF8 0 0
+2388 midi 0xF8 0 0
+2408 midi 0xF8 0 0
+2429 midi 0xF8 0 0
+2450 midi 0xF8 0 0
+2471 midi 0xF8 0 0
+2492 midi 0xF8 0 0
+2512 midi 0xF8 0 0
+2533 midi 0xF8 0 0
+2554 midi 0xF8 0 0
+2575 midi 0xF8 0 0
+2596 midi 0xF8 0 0
+2617 midi 0xF8 0 0
+2638 midi 0xF8 0 0
+2658 midi 0xF8 0 0
+2679 midi 0xF8 0 0
+2700 midi 0xF8 0 0
+2721 midi 0xF8 0 0
+2742 midi 0xF8 0 0
+2762 midi 0xF8 0 0
+2783 midi 0xF8 0 0
+2804 midi 0xF8 0 0
+2825 midi 0xF8 0 0
+2846 midi 0xF8 0 0
+2867 midi 0xF8 0 0
+2888 midi 0xF8 0 0
+2908 midi 0xF8 0 0
+2929 midi 0xF8 0 0
+2950 midi 0xF8 0 0
+2971 midi 0xF8 0 0
+2992 midi 0xF8 0 0
+3012 midi 0xF8 0 0
+3033 midi 0xF8 0 0
+3054 midi 0xF8 0 0
+3075 midi 0xF8 0 0
+3096 midi 0xF8 0 0
+3117 midi 0xF8 0 0
+3138 midi 0xF8 0 0
+3158 midi 0xF8 0 0
+3179 midi 0xF8 0 0
+3200 midi 0xF8 0 0
+3221 midi 0xF8 0 0
+3242 midi 0xF8 0 0
+3262 midi 0xF8 0 0
+3283 midi 0xF8 0 0
+3304 midi 0xF8 0 0
+3325 midi 0xF8 0 0
+3346 midi 0xF8 0 0
+3367 midi 0xF8 0 0
+3388 midi 0xF8 0 0
+3408 midi 0xF8 0 0
+3429 midi 0xF8 0 0
+3450 midi 0xF8 0 0
+3471 midi 0xF8 0 0
+3492 midi 0xF8 0 0
+3500 shot
+3512 midi 0xF8 0 0
+3533 midi 0xF8 0 0
+3554 midi 0xF8 0 0
+3575 midi 0xF8 0 0
+3596 midi 0xF8 0 0
+3617 midi 0xF8 0 0
+3638 midi 0xF8 0 0
+3658 midi 0xF8 0 0
+3679 midi 0xF8 0 0
+3700 midi 0xF8 0 0
+3721 midi 0xF8 0 0
+3742 midi 0xF8 0 0
+3762 midi 0xF8 0 0
+3783 midi 0xF8 0 0
+3804 midi 0xF8 0 0
+3825 midi 0xF8 0 0
+3846 midi 0xF8 0 0
+3867 midi 0xF8 0 0
+3888 midi 0xF8 0 0
+3908 midi 0xF8 0 0
+3929 midi 0xF8 0 0
+3950 midi 0xF8 0 0
+3971 midi 0xF8 0 0
+3992 midi 0xF8 0 0
+4012 midi 0xF8 0 0
+4033 midi 0xF8 0 0
+4054 midi 0xF8 0 0
+4075 midi 0xF8 0 0
+4096 midi 0xF8 0 0
+4117 midi 0xF8 0 0
+4138 midi 0xF8 0 0
+4158 midi 0xF8 0 0
+4179 midi 0xF8 0 0
+4200 midi 0xF8 0 0
+4221 midi 0xF8 0 0
+4242 midi 0xF8 0 0
+4262 midi 0xF8 0 0
+4283 midi 0xF8 0 0
+4304 midi 0xF8 0 0
+4325 midi 0xF8 0 0
+4346 midi 0xF8 0 0
+4367 midi 0xF8 0 0
+4388 midi 0xF8 0 0
+4408 midi 0xF8 0 0
+4429 midi 0xF8 0 0
+4450 midi 0xF8 0 0
+4471 midi 0xF8 0 0
+4492 midi 0xF8 0 0
+4512 midi 0xF8 0 0
+4533 midi 0xF8 0 0
+4554 midi 0xF8 0 0
+4575 midi 0xF8 0 0
+4596 midi 0xF8 0 0
+4617 midi 0xF8 0 0
+4638 midi 0xF8 0 0
+4658 midi 0xF8 0 0
+4679 midi 0xF8 0 0
+4700 midi 0xF8 0 0
+4721 midi 0xF8 0 0
+4742 midi 0xF8 0 0
+4762 midi 0xF8 0 0
+4783 midi 0xF8 0 0
+4804 midi 0xF8 0 0
+4825 midi 0xF8 0 0
+4846 midi 0xF8 0 0
+4867 midi 0xF8 0 0
+4888 midi 0xF8 0 0
+4908 midi 0xF8 0 0
+4929 midi 0xF8 0 0
+4950 midi 0xF8 0 0
+4971 midi 0xF8 0 0
+4992 midi 0xF8 0 0
+5012 midi 0xF8 0 0
+5033 midi 0xF8 0 0
+5054 midi 0xF8 0 0
+5075 midi 0xF8 0 0
+5096 midi 0xF8 0 0
+5117 midi 0xF8 0 0
+5138 midi 0xF8 0 0
+5158 midi 0xF8 0 0
+5179 midi 0xF8 0 0
+5200 midi 0xF8 0 0
+5400 midi 0xFC 0 0
+6200 end

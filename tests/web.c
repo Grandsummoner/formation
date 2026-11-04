@@ -141,6 +141,7 @@ EXPORT("emu_btn") void emu_btn(uint32_t id, uint32_t down)
 EXPORT("emu_enc") void emu_enc(uint32_t id, int32_t d) { host_enc[id & 7u] += d; }
 EXPORT("emu_midi_in") void emu_midi_in(uint32_t st, uint32_t d1, uint32_t d2)
 {
+    if (st >= 0xF8u && app_midi_rt(0xFu | st << 8)) return;                    /* clock and transport: the app times them */
     mq[mq_w % 64u][0] = (uint8_t)st; mq[mq_w % 64u][1] = (uint8_t)d1; mq[mq_w % 64u][2] = (uint8_t)d2;
     mq_w++;
 }

@@ -46,7 +46,7 @@ BRASS) per scene, through a delay and a small stereo reverb.
 | **HOME** | GENERATE: entropy, harmony, chaos, morph / RHYTHM: rest, density, swing, legato |
 | **FX** | VOICE A: instrument, timbre, delay, level / VOICE B: the same for scene B; then REVERB: send of A, send of B, size, bright / DELAY: time (1/16, 1/8, 1/8 dotted, 1/4), feedback, tone |
 | **LFO** | speed and depth of the six LFOs, two parameters a half: MORPH REST / LEGATO ENTROPY / HARMONY CHAOS |
-| **GLO** | TEMPO KEY: BPM (1 to 480), step division, transpose, theme / SCALE MIDI: root, scale, MIDI channel of A and of B; then CHORD SYNC: CHORD (STACK, SUS, QUART, ADD9), SPREAD (AUTO, CLOSE, OPEN) and SYNC (the MIDI sync out: OFF, START for start and stop only, or CLOCK for the 24-a-beat clock as well). Knobs 1 to 3 turn them; then AUTO A-B: AUTO (OFF, ONCE, PING, SAW), BARS (1, 2, 4, 8, 16, 32 or 64) and SHAPE (LINEAR or EASE). |
+| **GLO** | TEMPO KEY: BPM (1 to 480), step division, transpose, theme / SCALE MIDI: root, scale, MIDI channel of A and of B; then CHORD SYNC: CHORD (STACK, SUS, QUART, ADD9), SPREAD (AUTO, CLOSE, OPEN) and SYNC (the MIDI sync out: OFF, START for start and stop only, or CLOCK for the 24-a-beat clock as well) and CLOCK (where the tempo comes from: INT, EXT or AUTO). Knobs 1 to 4 turn them; then AUTO A-B: AUTO (OFF, ONCE, PING, SAW), BARS (1, 2, 4, 8, 16, 32 or 64) and SHAPE (LINEAR or EASE). |
 
 On the performance screen the knobs turn the RHYTHM values: **Knob 1** rest (or, with a step key held, that step's level),
 **Knob 2** density, **Knob 3** swing, **Knob 4** legato. Turn a knob fast and it takes bigger steps.
@@ -68,6 +68,16 @@ On the performance screen the knobs turn the RHYTHM values: **Knob 1** rest (or,
 | **ARP** | ARP mode: notes come from the keys you hold (or are latched), or from the scale and root if none are held. **Long press: LATCH on / off.** |
 | **SEQ** | SEQ mode: loops eight stored notes (set them with a step key plus a lower key). |
 | **SEL** | POLY on / off (chords from Harmony). |
+
+**Clock: master or follower.** CLOCK on the CHORD SYNC page says who keeps the time. **INT**: Formation is the master: its BPM sets the tempo, SYNC
+sends the clock and Start / Stop out, and a clock that comes in is ignored. **EXT**: Formation follows the 24-a-beat MIDI clock that comes in on
+USB or Bluetooth: nothing plays until a Start (or PLAY, then the next ticks); Start runs it from the first step, Continue carries on, Stop stops
+it; the steps happen on the clock's ticks (with the swing as a delay of the odd ones), AUTO A-B counts its bars in the clock's beats, and the BPM
+shown, the delay and the LFOs go by the tempo of the clock (the BPM knob does nothing then). The footer shows EXT. **AUTO**: it follows a clock while
+one is coming in, and when it has been gone for 300 ms it carries on by itself at the tempo the clock had. While Formation follows it sends no clock
+or Start / Stop out (so a clock can go round a ring of devices without echoing). That is why there is a switch: Formation both sends and takes MIDI, and
+only one of the two can be the master. Over Bluetooth a clock arrives in bursts, a connection interval apart, so the steps wobble by that much: use USB for a
+tight sync. The TRS jack is not read by the firmware yet.
 
 **Tempo.** BPM goes from 1 to 480 (the knob speeds up when you turn it fast). At 1 BPM with quarter-note steps one step takes a
 minute; at 480 BPM with 32nd-note steps one step takes 16 ms. The extremes are for slow evolution and for rolls, with these

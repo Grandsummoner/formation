@@ -190,8 +190,10 @@ static void platform_poll(void)                 /* one call = one millisecond */
     while (step < script_n && script[step].t <= fm1_ms) {
         const host_ev_t *e = &script[step];
         if (e->st) {
-            mq[mq_w % 64u][0] = e->st; mq[mq_w % 64u][1] = e->d1; mq[mq_w % 64u][2] = e->d2;
-            mq_w++;
+            if (e->st < 0xF8u || !app_midi_rt(0xFu | (uint32_t)e->st << 8)) {         /* clock and transport go to the app's own handling */
+                mq[mq_w % 64u][0] = e->st; mq[mq_w % 64u][1] = e->d1; mq[mq_w % 64u][2] = e->d2;
+                mq_w++;
+            }
         } else if (e->shot)
             shot_due = 1;
         else if (e->enc1)

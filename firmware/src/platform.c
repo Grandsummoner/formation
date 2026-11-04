@@ -24,6 +24,11 @@ enum { BTN_OCT_DOWN = 0, BTN_OCT_UP = 1, BTN_FX = 2, BTN_SEL = 3, BTN_ENV = 4, B
 enum { ENC_SELECT = 0, ENC_ALGORITHM = 1, ENC_KNOB1 = 2, ENC_KNOB2 = 3, ENC_KNOB3 = 4, ENC_KNOB4 = 5, ENC_PRESETS = 6 };
 #define KEY_LED(k) (14u + (k))
 
+/* the MIDI clock and transport that come in, on any port (USB, Bluetooth): the app takes them with the time they arrived, in the
+ * interrupt that read them, and they do not go into the ring midi_get reads. app_midi_rt is the app's (formation.c); 1: handled. */
+#include <stdint.h>
+static int app_midi_rt(uint32_t pkt);
+
 /* Bluetooth LE MIDI (firmware/src/ble/fm_ble.c on the FM-1; stand-ins in tests/host.c and tests/web.c):
  *   bt_init(rec)   once, after the settings are read: rec is the record kept in them (BT_KEPT bytes)
  *   bt_set(on)     BLUETOOTH on / off, from the main loop (the first ON starts the radio)
@@ -82,6 +87,7 @@ static volatile uint32_t fm1_ms;                /* milliseconds since power-on (
 static void bt_out(uint32_t pkt);
 static void bt_poll(void);
 #define APP_MIDI_OUT(pkt) bt_out(pkt)
+#define APP_MIDI_RT(pkt) app_midi_rt(pkt)
 #define APP_T5_POLL() bt_poll()
 #include "usb.c"
 
