@@ -43,6 +43,26 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
       - name: Host-mode test (the arp and the screens run on this computer)
         run: sh tests/run_host.sh tests/full.txt > host.log && tail -3 host.log
+      - name: Host-mode test of the BLUETOOTH row (the stand-in keeps only the switch)
+        run: sh tests/run_host.sh tests/ble.txt > ble.log && grep -q "BLUETOOTH ON" ble.log && grep -q "BLUETOOTH OFF" ble.log
+      - name: Host-mode test of the MIDI sync out (Start, clock, Stop; then OFF)
+        run: sh tests/run_host.sh tests/sync.txt > sync.log && grep -q "MIDI out FA" sync.log && grep -q "MIDI out F8" sync.log && grep -q "MIDI out FC" sync.log
+      - name: Unit tests on the host (the tempo range, AUTO A-B, every chord of every scale)
+        run: |
+          cc -O1 -w -DDINGHY_HOST -DAPP_VER='"t"' -Ifirmware/src -Ifirmware/gen -o /tmp/unit_auto tests/unit_auto.c && /tmp/unit_auto
+          cc -O1 -w -DDINGHY_HOST -DAPP_VER='"t"' -Ifirmware/src -Ifirmware/gen -o /tmp/unit_chords tests/unit_chords.c && /tmp/unit_chords
+          cc -O1 -w -DDINGHY_HOST -DAPP_VER='"t"' -Ifirmware/src -Ifirmware/gen -o /tmp/unit_new tests/unit_new.c && /tmp/unit_new
+      - name: Host-mode test of the tempo range and AUTO A-B (the A-to-B marker moves)
+        run: sh tests/run_host.sh tests/auto.txt > auto.log && [ "$(ls build/host/*.png | wc -l)" -ge 18 ]
+      - name: Host-mode test of the external MIDI clock (EXT and AUTO)
+        run: |
+          sh tests/run_host.sh tests/clockin.txt > ext.log
+          sh tests/run_host.sh tests/clockauto.txt > auto.log
+          python3 tests/check_clock.py ext.log auto.log
+      - name: Host-mode test of the six themes and the colour modes
+        run: |
+          sh tests/run_host.sh tests/look.txt > look.log && [ "$(ls build/host/*.png | wc -l)" -ge 12 ]
+          sh tests/run_host.sh tests/modes.txt > modes.log
       - name: Browser emulator (the firmware compiled to WebAssembly, then tested in Node)
         continue-on-error: true
         run: |
