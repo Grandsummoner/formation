@@ -1,7 +1,7 @@
 # Formation for the M-VAVE FM-1
 
 A port of [Navy Arp 2](https://github.com/Grandsummoner/navy-arp2), the dual-scene probabilistic arpeggiator and step
-sequencer, to the FM-1: custom firmware that plays the FM-1's own sounds (eleven instruments, delay and reverb, an automatic A-to-B crossfade) and sends MIDI, with clock
+sequencer, to the FM-1: custom firmware that plays the FM-1's own sounds (27 instruments, delay and reverb, an automatic A-to-B crossfade) and sends MIDI, with clock
 if you like, over USB and, if you switch it on, Bluetooth LE. Free software (GPL-3.0). **Install:** use the web installer of your GitHub Pages site (after the first release, see below), in Chrome
 or Edge, with the FM-1 connected by USB.
 
