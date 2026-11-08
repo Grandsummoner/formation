@@ -18,8 +18,17 @@ walk, reverse, skipping). **Legato** sets how long notes last. **Density** raise
 Scene A plays on MIDI channel 1 and scene B on channel 2 (GLO page); the crossfade moves note velocity (and the
 sound) from A to B with an equal-power curve.
 
-The sound is the FM-1's own: eleven instruments (ANALOG, FM, SUPERSAW, PULSE, E PIANO, BELL, PLUCK, ORGAN, BASS, PAD,
-BRASS) per scene, through a delay and a small stereo reverb.
+The sound is the FM-1's own: 27 instruments per scene, through a delay and a small stereo reverb, each scene placed in the stereo
+field by its PAN. The first eleven are small and cheap: ANALOG, FM, SUPERSAW, PULSE, E PIANO, BELL, PLUCK, ORGAN, BASS, PAD,
+BRASS. The next sixteen share one synth engine (oscillators, a resonant two-pole low-pass that the level envelope opens, the
+timbre knob moving the cutoff) and are voiced after the character of classic synths, not copies of them: PROPHET 5 (two saws,
+mid resonance), MINIMOOG (two saws and a sub square, a resonant sweep: a fat bass), JUNO PAD (saw, drifting pulse, sub), SYNC LEAD
+(hard sync with a sweeping slave), VIRUS SAW (seven detuned saws), SH-101 (saw, pulse, sub), ACID 303 (a saw into a very resonant
+filter with a fast sweep), STRINGS (five wide saws, slow in), CS-80 BRASS (three saws with a swelling filter), DX BASS (FM 2:1 with
+a sub), CLAVINET (a narrow pulse, plucked), VIBES (soft FM), PWM PAD (two pulses whose widths move against each other), BREATH
+(noise through a resonance at the pitch), HOOVER (three saws diving in from above) and WOBBLE BASS (two saws with the filter
+wobbling in eighth notes of the BPM). They cost about as much as FM; the reverb on top costs more than four voices, so watch the
+DSP figure (it shows in the footer from 60 %, in amber, and red from 80 %).
 
 ## Controls
 
@@ -37,16 +46,22 @@ BRASS) per scene, through a delay and a small stereo reverb.
   save makes the slot's key and SAVE blink fast; a recall makes them blink slowly (a recall waits for the end of the measure
   while it plays); a copy or an init flashes the two scene keys (or the one) and SAVE; a randomise flashes the scene's key
   and EDIT.
-* **Colour**: each theme has a colour for scene A, one for scene B (cells of a scene are drawn in its colour), one for each
+* **The globe** is a mesh of 62 nodes after Navy Arp 2's: the rings in the theme's colours, each ring's nodes glowing with one of the six LFOs.
+  While it plays, four coloured triangles hop from node to node, and every note makes one flare and hop.
+* **Level meter**: two small bars at the right of the globe show the left and right level (METER on the MIDI IN LOOK page). The
+  DSP load shows in the footer once it is over 60 %.
+* **Colour**: COLOUR (GLO page, MIDI IN LOOK) has three settings: SOFT (one hue: the theme's ramp, the scenes by brightness),
+  RICH (the scenes, the page groups, the towers and the globe in the theme's colours) and WILD (RICH, with each tower, each ring and
+  each flash in a colour of its own). Each theme has a colour for scene A, one for scene B (cells of a scene are drawn in its colour), one for each
   group of pages (HOME, FX, LFO, GLO), and a colour range for the towers (low to high levels). Six themes: NAVY, MONO,
   MATRIX, SUNSET, AURORA, NEON (GLO page, TEMPO KEY, knob 4; or the SYSTEM menu).
 
 | Button | Its pages (top half / bottom half) |
 | --- | --- |
 | **HOME** | GENERATE: entropy, harmony, chaos, morph / RHYTHM: rest, density, swing, legato |
-| **FX** | VOICE A: instrument, timbre, delay, level / VOICE B: the same for scene B; then REVERB: send of A, send of B, size, bright / DELAY: time (1/16, 1/8, 1/8 dotted, 1/4), feedback, tone |
+| **FX** | VOICE A: instrument, timbre, delay, level / VOICE B: the same for scene B; then REVERB: send of A, send of B, size, bright / DELAY: time (1/16, 1/8, 1/8 dotted, 1/4), feedback, tone; then MIX: PAN A and PAN B (L to R, C in the middle) |
 | **LFO** | speed and depth of the six LFOs, two parameters a half: MORPH REST / LEGATO ENTROPY / HARMONY CHAOS |
-| **GLO** | TEMPO KEY: BPM (1 to 480), step division, transpose, theme / SCALE MIDI: root, scale, MIDI channel of A and of B; then CHORD SYNC: CHORD (STACK, SUS, QUART, ADD9), SPREAD (AUTO, CLOSE, OPEN) and SYNC (the MIDI sync out: OFF, START for start and stop only, or CLOCK for the 24-a-beat clock as well) and CLOCK (where the tempo comes from: INT, EXT or AUTO). Knobs 1 to 4 turn them; then AUTO A-B: AUTO (OFF, ONCE, PING, SAW), BARS (1, 2, 4, 8, 16, 32 or 64) and SHAPE (LINEAR or EASE). |
+| **GLO** | TEMPO KEY: BPM (1 to 480), step division, transpose, theme / SCALE MIDI: root, scale, MIDI channel of A and of B; then CHORD SYNC: CHORD (STACK, SUS, QUART, ADD9), SPREAD (AUTO, CLOSE, OPEN) and SYNC (the MIDI sync out: OFF, START for start and stop only, or CLOCK for the 24-a-beat clock as well) and CLOCK (where the tempo comes from: INT, EXT or AUTO). Knobs 1 to 4 turn them; then AUTO A-B: AUTO (OFF, ONCE, PING, SAW), BARS (1, 2, 4, 8, 16, 32 or 64) and SHAPE (LINEAR or EASE); then MIDI IN LOOK: CC IN and PROG (on or off), COLOUR (SOFT, RICH, WILD) and METER (on or off). |
 
 On the performance screen the knobs turn the RHYTHM values: **Knob 1** rest (or, with a step key held, that step's level),
 **Knob 2** density, **Knob 3** swing, **Knob 4** legato. Turn a knob fast and it takes bigger steps.
@@ -67,7 +82,7 @@ On the performance screen the knobs turn the RHYTHM values: **Knob 1** rest (or,
 | **PLAY** | Start / stop the clock. |
 | **ARP** | ARP mode: notes come from the keys you hold (or are latched), or from the scale and root if none are held. **Long press: LATCH on / off.** |
 | **SEQ** | SEQ mode: loops eight stored notes (set them with a step key plus a lower key). |
-| **SEL** | POLY on / off (chords from Harmony). |
+| **SEL** | POLY on / off (chords from Harmony). On the GLO page with BPM (TEMPO KEY) it taps the tempo instead: from the last four taps; a pause of two seconds starts again. |
 
 **Clock: master or follower.** CLOCK on the CHORD SYNC page says who keeps the time. **INT**: Formation is the master: its BPM sets the tempo, SYNC
 sends the clock and Start / Stop out, and a clock that comes in is ignored. **EXT**: Formation follows the 24-a-beat MIDI clock that comes in on
@@ -77,7 +92,23 @@ shown, the delay and the LFOs go by the tempo of the clock (the BPM knob does no
 one is coming in, and when it has been gone for 300 ms it carries on by itself at the tempo the clock had. While Formation follows it sends no clock
 or Start / Stop out (so a clock can go round a ring of devices without echoing). That is why there is a switch: Formation both sends and takes MIDI, and
 only one of the two can be the master. Over Bluetooth a clock arrives in bursts, a connection interval apart, so the steps wobble by that much: use USB for a
-tight sync. The TRS jack is not read by the firmware yet.
+tight sync. The clock and transport also come in on the TRS jack (below).
+
+**MIDI in.** Formation takes MIDI on USB, Bluetooth and the TRS jack (a MIDI Type A jack on the FM-1: notes, control changes, program
+changes, clock and start / stop; the jack's driver is Optimist's, which came from Melodee, where it was checked on an FM-1). Notes
+play like the keys. With CC IN on, control changes on any channel move parameters (0 to 127 over the range):
+
+| CC | What | CC | What |
+| --- | --- | --- | --- |
+| 8 | crossfade A to B | 70 / 71 | timbre A / B |
+| 12 | density | 72 / 73 | level A / B |
+| 13 | swing | 74 / 75 | delay send A / B |
+| 20 to 25 | scene A: MORPH, REST, LEGATO, ENTROPY, HARMONY, CHAOS | 85 / 86 | reverb send A / B |
+| 26 to 31 | scene B: the same six | 87 / 88 | reverb size / bright |
+|  |  | 90 / 91 | pan A / B |
+
+With PROG on, a program change from 0 to 15 recalls that preset (at the end of the measure while it plays; at once when stopped).
+A CC on the crossfade works with AUTO A-B like the knob does: the trip carries on from where it was put.
 
 **Tempo.** BPM goes from 1 to 480 (the knob speeds up when you turn it fast). At 1 BPM with quarter-note steps one step takes a
 minute; at 480 BPM with 32nd-note steps one step takes 16 ms. The extremes are for slow evolution and for rolls, with these
@@ -110,7 +141,7 @@ close thirds are muddy. CHAOS moves the whole chord an octave, never a single no
 | --- | --- |
 | **Knobs 1-4** | The four values of the lit half, or the RHYTHM values on the performance screen (above). |
 | **ALGORITHM** | The A-to-B crossfade, on every screen. With AUTO A-B on, turning it moves the crossfade by hand and the automatic trip carries on from where you leave it. |
-| **PRESETS** | The edited scene's voice: MIDI only, ANALOG, FM, SUPERSAW, PULSE, E PIANO, BELL, PLUCK, ORGAN, BASS, PAD, BRASS. |
+| **PRESETS** | The edited scene's voice: MIDI only, then the 27 instruments in the order above. |
 | **SELECT** | Menus: SCALE and ROOT, COPY and INIT, SYSTEM (they go back after 2.5 seconds without a touch). |
 | **MASTER** | Volume. |
 

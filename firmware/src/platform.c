@@ -6,6 +6,7 @@
  *   USB rescue          OCT- held at power-on: no audio, only the updater (the web installer still works)
  *   updater             the M-UPGRADE SysEx path: the web installer / the hub can always reach the FM-1
  *   USB-MIDI            in and out (midi_get, midi_send)
+ *   TRS MIDI in         the jack: notes, control and program changes, clock and transport (midi_uart.c)
  *   BLE-MIDI            out beside USB's, in into the same ring; off at power-on (bt_set, bt_state; ble/fm_ble.c)
  *   USB audio           the output as a class-compliant 16-bit stereo input, 44.1 or 48 kHz
  *   keys, knobs, LEDs   fm1_in.notes / buttons, fm1_input_edges, fm1_enc_take, fm1_led_key (hal/fm1_input.h)
@@ -90,6 +91,7 @@ static void bt_poll(void);
 #define APP_MIDI_RT(pkt) app_midi_rt(pkt)
 #define APP_T5_POLL() bt_poll()
 #include "usb.c"
+#include "midi_uart.c"                       /* the TRS jack: MIDI in (midi_in_event of usb.c takes what it reads) */
 
 /* ---- flash: read anywhere; erase / program only the update's staging area and the settings sector */
 #define SETTINGS_AT 0x000FC000u                 /* one 4 KiB sector of Felucca's globals area */
@@ -243,6 +245,7 @@ void fm1_timer5_irq(void)
     }
     if (owed) {
         usb_poll();
+        uart_midi_poll();                       /* the TRS jack's bytes */
         APP_T5_POLL();                          /* BLE-MIDI in -> usb.c's ring */
     }
     owed = 0;
@@ -365,6 +368,7 @@ void fm1_cstart(void)
     fm1_adc_init();
     fm1_audio_init(abuf, HALF_WORDS, isr_alnk0, 3);   /* (abuf is zero: .bss) */
     usb_start();
+    uart_midi_init();                           /* the TRS MIDI in: before the timer starts (PORTH is read-modify-written) */
     fm1_timer5_start(isr_timer5, 4);
     bt_attach();                                /* the two BLE vectors (masked), while the vector table is open */
     fm1_guard_lock_top();

@@ -1,0 +1,36 @@
+# Formation host test: every page of FX and GLO, one shot each. buttons: 2 FX 7 GLO 8 HOME
+1400 btn 2
+1420 btnup 2
+2000 shot
+2200 btn 2
+2220 btnup 2
+2800 shot
+3000 btn 2
+3020 btnup 2
+3600 shot
+3800 btn 2
+3820 btnup 2
+4400 shot
+4600 btn 2
+4620 btnup 2
+5200 shot
+5400 btn 8
+5420 btnup 8
+5800 btn 7
+5820 btnup 7
+6400 shot
+6600 btn 7
+6620 btnup 7
+7200 shot
+7400 btn 7
+7420 btnup 7
+8000 shot
+8200 btn 7
+8220 btnup 7
+8800 shot
+9000 btn 7
+9020 btnup 7
+9600 shot
+9800 btn 8
+9820 btnup 8
+10400 end
