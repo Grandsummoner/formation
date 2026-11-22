@@ -47,7 +47,7 @@ jobs:
         run: sh tests/run_host.sh tests/ble.txt > ble.log && grep -q "BLUETOOTH ON" ble.log && grep -q "BLUETOOTH OFF" ble.log
       - name: Host-mode test of the MIDI sync out (Start, clock, Stop; then OFF)
         run: sh tests/run_host.sh tests/sync.txt > sync.log && grep -q "MIDI out FA" sync.log && grep -q "MIDI out F8" sync.log && grep -q "MIDI out FC" sync.log
-      - name: Unit tests on the host (the tempo range, AUTO A-B, every chord of every scale, v1.7: old saves, ENV, LFOs, a delay and reverb per voice, REC, CHAIN, panic)
+      - name: Unit tests on the host (the tempo range, AUTO A-B, every chord of every scale, and for v1.7 the old saves, ENV, LFOs, a delay and reverb per voice, REC, CHAIN, panic)
         run: |
           cc -O1 -w -DDINGHY_HOST -DAPP_VER='"t"' -Ifirmware/src -Ifirmware/gen -o /tmp/unit_auto tests/unit_auto.c && /tmp/unit_auto
           cc -O1 -w -DDINGHY_HOST -DAPP_VER='"t"' -Ifirmware/src -Ifirmware/gen -o /tmp/unit_chords tests/unit_chords.c && /tmp/unit_chords
