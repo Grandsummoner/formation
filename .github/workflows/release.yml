@@ -47,13 +47,16 @@ jobs:
         run: sh tests/run_host.sh tests/ble.txt > ble.log && grep -q "BLUETOOTH ON" ble.log && grep -q "BLUETOOTH OFF" ble.log
       - name: Host-mode test of the MIDI sync out (Start, clock, Stop; then OFF)
         run: sh tests/run_host.sh tests/sync.txt > sync.log && grep -q "MIDI out FA" sync.log && grep -q "MIDI out F8" sync.log && grep -q "MIDI out FC" sync.log
-      - name: Unit tests on the host (the tempo range, AUTO A-B, every chord of every scale)
+      - name: Unit tests on the host (the tempo range, AUTO A-B, every chord of every scale, v1.7: old saves, ENV, LFOs, a delay and reverb per voice, REC, CHAIN, panic)
         run: |
           cc -O1 -w -DDINGHY_HOST -DAPP_VER='"t"' -Ifirmware/src -Ifirmware/gen -o /tmp/unit_auto tests/unit_auto.c && /tmp/unit_auto
           cc -O1 -w -DDINGHY_HOST -DAPP_VER='"t"' -Ifirmware/src -Ifirmware/gen -o /tmp/unit_chords tests/unit_chords.c && /tmp/unit_chords
           cc -O1 -w -DDINGHY_HOST -DAPP_VER='"t"' -Ifirmware/src -Ifirmware/gen -o /tmp/unit_new tests/unit_new.c && /tmp/unit_new
+          cc -O1 -w -DDINGHY_HOST -DAPP_VER='"t"' -Ifirmware/src -Ifirmware/gen -o /tmp/unit_v17 tests/unit_v17.c && /tmp/unit_v17
       - name: Host-mode test of the tempo range and AUTO A-B (the A-to-B marker moves)
         run: sh tests/run_host.sh tests/auto.txt > auto.log && [ "$(ls build/host/*.png | wc -l)" -ge 18 ]
+      - name: Host-mode tour of the v1.7 screens (FX, ENV, LFO and GLO pages, the menus, help text, SAVE, REC, panic)
+        run: sh tests/run_host.sh tests/v17.txt > v17.log && [ "$(ls build/host/*.png | wc -l)" -ge 20 ]
       - name: Host-mode test of the external MIDI clock (EXT and AUTO)
         run: |
           sh tests/run_host.sh tests/clockin.txt > ext.log
