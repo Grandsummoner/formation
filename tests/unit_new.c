@@ -17,7 +17,8 @@ int main(void)
     cc_in(22, 127); CHECK(cur.sc[0].p[2] == 255, "CC 22: scene A LEGATO");
     cc_in(28, 127); CHECK(cur.sc[1].p[2] == 255, "CC 28: scene B LEGATO");
     cc_in(71, 100); CHECK(cur.sc[1].timbre > 190 && cur.sc[1].timbre < 205, "CC 71: timbre B");
-    cc_in(85, 127); CHECK(cur.rv[0] == 255, "CC 85: reverb send A");
+    cc_in(85, 127); CHECK(cur.sc[0].rsend == 255, "CC 85: reverb send A (each voice has its own)");
+    cc_in(87, 127); CHECK(cur.sc[0].rsize == 255 && cur.sc[1].rsize == 255, "CC 87: reverb size, both voices");
     cc_in(90, 0);   CHECK(fxs.pana == 0, "CC 90: pan A");
     CHECK(cc_in(3, 10) == 0, "an unassigned CC changes nothing");
     /* program change */
@@ -25,7 +26,7 @@ int main(void)
     pc_in(3); CHECK(cur.density == 77, "program change 3 recalls preset 4 (stopped: at once)");
     pc_in(9); CHECK(cur.density == 77, "a program change to an empty slot does nothing");
     /* pans: a scene hard left sounds only on the left */
-    preset_init(&cur); fxs.pana = 0; fxs.panb = 255; cur.morph_pos = 0; cur.rv[0] = cur.rv[1] = 0; cur.sc[0].dsend = 0; fxs.dfb = 0; weights();
+    preset_init(&cur); fxs.pana = 0; fxs.panb = 255; cur.morph_pos = 0; cur.sc[0].rsend = cur.sc[1].rsend = 0; cur.sc[0].dsend = 0; cur.sc[0].dfb = cur.sc[1].dfb = 0; weights();
     memset(sl, 0, sizeof sl); voice_on(0, 60);
     { int32_t pl = 0, pr = 0; uint32_t b;
       for (b = 0; b < 40; b++) { memset(out, 0, sizeof out); app_audio(out, HALF_FRAMES);
@@ -44,12 +45,12 @@ int main(void)
     fm1_ms = 14000; tap_tempo(); fm1_ms = 14400; tap_tempo();
     CHECK(bpm_get(&cur) == 150, "tap tempo: after a pause it starts again (400 ms = 150 BPM)");
     /* the settings bytes of the global settings go round */
-    { uint8_t f[8]; fxs.dtime = 1; fxs.dfb = 77; fxs.dtone = 33; fxs.sync = 1; fxs.chord = 3; fxs.voic = 2; fxs.amode = 2; fxs.abars = 5; fxs.ashp = 1; fxs.csrc = 2;
+    { uint8_t f[8]; leg_dly[0] = 1; leg_dly[1] = 77; leg_dly[2] = 33; fxs.hint = 1; fxs.recm = 1; fxs.sync = 1; fxs.chord = 3; fxs.voic = 2; fxs.amode = 2; fxs.abars = 5; fxs.ashp = 1; fxs.csrc = 2;
       fxs.cmode = 2; fxs.meter = 0; fxs.ccin = 0; fxs.pcin = 1; fxs.pana = 11; fxs.panb = 222;
       fx_save(f);
-      fxs.dtime = fxs.dfb = fxs.dtone = fxs.sync = fxs.chord = fxs.voic = fxs.amode = fxs.abars = fxs.ashp = fxs.csrc = fxs.cmode = fxs.meter = fxs.ccin = fxs.pcin = fxs.pana = fxs.panb = 0;
+      leg_dly[0] = leg_dly[1] = leg_dly[2] = fxs.hint = fxs.recm = fxs.sync = fxs.chord = fxs.voic = fxs.amode = fxs.abars = fxs.ashp = fxs.csrc = fxs.cmode = fxs.meter = fxs.ccin = fxs.pcin = fxs.pana = fxs.panb = 0;
       fx_load(f, 8);
-      CHECK(fxs.dtime == 1 && fxs.dfb == 77 && fxs.dtone == 33 && fxs.sync == 1 && fxs.chord == 3 && fxs.voic == 2 && fxs.amode == 2 && fxs.abars == 5 && fxs.ashp == 1 && fxs.csrc == 2, "the settings bytes: delay, sync, chord, AUTO, clock go round");
+      CHECK(leg_dly[0] == 1 && leg_dly[1] == 77 && leg_dly[2] == 33 && fxs.hint == 1 && fxs.recm == 1 && fxs.sync == 1 && fxs.chord == 3 && fxs.voic == 2 && fxs.amode == 2 && fxs.abars == 5 && fxs.ashp == 1 && fxs.csrc == 2, "the settings bytes: the old delay, help, REC, sync, chord, AUTO, clock go round");
       CHECK(fxs.cmode == 2 && fxs.meter == 0 && fxs.ccin == 0 && fxs.pcin == 1 && fxs.pana == 11 && fxs.panb == 222, "the settings bytes: colour, meter, CC / program in, pans go round"); }
     return fails ? 1 : (printf("ALL OK\n"), 0);
 }

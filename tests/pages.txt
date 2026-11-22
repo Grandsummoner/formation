@@ -1,36 +1,30 @@
-# Formation host test: every page of FX and GLO, one shot each. buttons: 2 FX 7 GLO 8 HOME
+# Formation host test: every page of FX, ENV, LFO and GLO, one shot each (SELECT goes through them). buttons: 2 FX 4 ENV 5 LFO 7 GLO 8 HOME
 1400 btn 2
 1420 btnup 2
 2000 shot
-2200 btn 2
-2220 btnup 2
+2200 enc 0 1
 2800 shot
-3000 btn 2
-3020 btnup 2
+3000 enc 0 1
 3600 shot
-3800 btn 2
-3820 btnup 2
+3800 enc 0 1
 4400 shot
-4600 btn 2
-4620 btnup 2
-5200 shot
-5400 btn 8
-5420 btnup 8
-5800 btn 7
-5820 btnup 7
+5000 enc 0 3
+5600 shot
+5800 btn 4
+5820 btnup 4
 6400 shot
-6600 btn 7
-6620 btnup 7
+6600 btn 5
+6620 btnup 5
 7200 shot
-7400 btn 7
-7420 btnup 7
+7400 enc 0 1
 8000 shot
 8200 btn 7
 8220 btnup 7
 8800 shot
-9000 btn 7
-9020 btnup 7
+9000 enc 0 1
 9600 shot
-9800 btn 8
-9820 btnup 8
-10400 end
+9800 enc 0 1
+10400 shot
+10600 btn 8
+10620 btnup 8
+11200 end

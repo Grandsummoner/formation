@@ -49,6 +49,6 @@ check(leds[12] === 1, "the PLAY LED is lit");
 // presets survive: save to slot 4, read the store back
 press(9); e.emu_key(4, 1); e.emu_step(40); e.emu_key(4, 0); e.emu_step(100);
 const pre = new Uint8Array(e.memory.buffer, e.emu_pre(), 8);
-check(e.emu_pre_ok(0) === 1 && pre[0] === 0x50 && pre[1] === 0x4E, "a preset was saved (PNV2 header)");
+check(e.emu_pre_ok(0) === 1 && pre[0] === 0x50 && pre[1] === 0x4E && pre[2] === 0x56 && pre[3] === 0x33, "a preset was saved (PNV3 header)");
 console.log(ok ? "ALL OK" : "FAILED");
 process.exit(ok ? 0 : 1);

@@ -6,12 +6,9 @@
 2520 btnup 12
 3500 btn 7
 3520 btnup 7
-3540 btn 7
-3560 btnup 7
-3580 btn 7
-3600 btnup 7
-3700 enc 4 -1
-3750 enc 4 -1
+3600 enc 0 3
+3700 enc 2 -1
+3750 enc 2 -1
 3800 btn 8
 3820 btnup 8
 4000 btn 12

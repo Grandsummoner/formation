@@ -1,18 +1,11 @@
 # Formation host test: the colour modes (SOFT, RICH, WILD), the level meter and the globe's flashes while a chord plays.
-# GLO page 5 (MIDI IN LOOK): knob 3 is COLOUR. buttons: 7 GLO 8 HOME 12 PLAY   encoders: 4 KNOB3   keys 0x91: a chord
+# GLO, then SELECT 5 times: MIDI IN LOOK (the last half): knob 3 is COLOUR. buttons: 7 GLO 8 HOME 12 PLAY   encoders: 4 KNOB3   keys 0x91: a chord
 1250 keys 0x91
 1280 btn 12
 1290 btnup 12
 1400 btn 7
 1420 btnup 7
-1440 btn 7
-1460 btnup 7
-1480 btn 7
-1500 btnup 7
-1520 btn 7
-1540 btnup 7
-1560 btn 7
-1580 btnup 7
+1500 enc 0 5
 1700 enc 4 -1
 2100 shot
 2200 btn 8
@@ -20,14 +13,7 @@
 3100 shot
 3300 btn 7
 3320 btnup 7
-3340 btn 7
-3360 btnup 7
-3380 btn 7
-3400 btnup 7
-3420 btn 7
-3440 btnup 7
-3460 btn 7
-3480 btnup 7
+3400 enc 0 5
 3600 enc 4 1
 4000 shot
 4100 btn 8
@@ -35,14 +21,7 @@
 5000 shot
 5200 btn 7
 5220 btnup 7
-5240 btn 7
-5260 btnup 7
-5280 btn 7
-5300 btnup 7
-5320 btn 7
-5340 btnup 7
-5360 btn 7
-5380 btnup 7
+5300 enc 0 5
 5500 enc 4 1
 5900 shot
 6000 btn 8

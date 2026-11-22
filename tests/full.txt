@@ -2,9 +2,13 @@
 # buttons: 0 OCT- 1 OCT+ 2 FX 3 SEL 4 ENV 5 LFO 6 EDIT 7 GLO 8 HOME 9 SAVE 10 ARP 11 SEQ 12 PLAY 13 REC
 # encoders: 0 SELECT 1 ALGORITHM (A-B crossfade) 2..5 KNOB1..4 6 PRESETS
 # white keys (lower row 1..16): 0x1 0x4 0x10 0x40 0x80 0x200 0x800 0x1000 ...   black keys (upper row 1..11): 0x2 0x8 0x20 0x100 0x400 0x2000 0x8000 0x20000 0x100000(A) 0x400000(B) 0x2000000(mute)
-# POLY on (SEL)
-1300 btn 3
-1320 btnup 3
+# POLY on (GLO, SELECT twice to the CHORDS page, knob 1), then back home
+1300 btn 7
+1320 btnup 7
+1340 enc 0 2
+1360 enc 2 1
+1380 btn 8
+1390 btnup 8
 # HOME: GENERATE half (top lit): knobs 1-4 = entropy, harmony, chaos, morph
 1400 btn 8
 1420 btnup 8
@@ -29,61 +33,74 @@
 4100 enc 1 25
 4200 shot
 5200 shot
-# FX: voice A (instrument, timbre), then voice B, then out
+# FX: A voice (instrument, timbre), A delay, A reverb, the same for B, MIX, then out (SELECT goes through them)
 5300 btn 2
 5320 btnup 2
 5400 enc 2 1
 5420 enc 3 -10
 5500 shot
-6300 shot
+5550 enc 0 1
+5560 enc 3 1
+5570 enc 2 5
+5600 shot
+5650 enc 0 1
+5660 enc 2 20
+5670 enc 4 -10
+5700 shot
+5750 enc 0 1
+5760 enc 2 1
+5800 shot
+5850 enc 0 1
+5860 enc 3 1
+5900 shot
+5950 enc 0 1
+5960 enc 2 20
+6000 shot
+6050 enc 0 1
+6060 enc 2 -20
+6100 shot
 6400 btn 2
 6420 btnup 2
 6500 shot
-# FX goes on: REVERB (send A, send B, size, bright), then DELAY (time, feedback, tone), then out
-6600 btn 2
-6620 btnup 2
-6640 enc 2 20
-6650 enc 4 -10
+# ENV: the envelope of A, then B
+6550 btn 4
+6560 btnup 4
+6570 enc 2 8
+6580 enc 5 8
+6590 enc 0 1
+6600 enc 3 -8
 6700 shot
-6720 btn 2
-6740 btnup 2
-6750 enc 2 1
-6760 enc 3 8
-6780 shot
-6790 btn 2
-6795 btnup 2
-# LFO: page 1 top (morph, rest speed and depth), bottom, page 2 top, then out
+6750 btn 4
+6760 btnup 4
+# LFO: the first LFO (shape, rate, depth), the second, then out
 6800 btn 5
 6820 btnup 5
 6900 enc 2 2
-7000 enc 3 15
-7100 enc 4 3
+7000 enc 3 3
+7100 enc 4 15
+7300 shot
+7400 enc 0 1
+7450 enc 3 2
+7460 enc 4 10
 7800 shot
-7900 btn 5
-7920 btnup 5
-8000 btn 5
-8020 btnup 5
 8100 shot
 8200 btn 5
 8220 btnup 5
-# GLO: tempo and key, then scale and midi, then out
+# GLO: tempo and key, scale and midi, chords and sync, then out
 8400 btn 7
 8420 btnup 7
 8500 enc 2 30
 9200 shot
-9300 btn 7
-9320 btnup 7
+9300 enc 0 1
 9400 enc 3 1
 9500 enc 4 1
 10200 shot
-# GLO goes on: CHORD SYNC (the chord type, its voicing, the MIDI sync out), then out
-10300 btn 7
-10320 btnup 7
-10340 enc 2 1
-10350 enc 3 1
+10300 enc 0 1
+10340 enc 3 1
+10350 enc 4 1
 10400 shot
-10420 enc 2 -1
-10430 enc 3 -1
+10420 enc 3 -1
+10430 enc 4 -1
 10440 btn 7
 10460 btnup 7
 # EDIT: tap = randomise, long press = auto re-roll each measure
@@ -105,12 +122,12 @@
 14850 keys 0x2000191
 14900 keys 0x2000091
 14950 keys 0x91
-# Freeze on and off
-15100 btn 13
-15120 btnup 13
+# Freeze on and off (SEL)
+15100 btn 3
+15120 btnup 3
 15800 shot
-15900 btn 13
-15920 btnup 13
+15900 btn 3
+15920 btnup 3
 # Latch (long press ARP), then let go of the keys: it keeps playing
 16000 btn 10
 16700 btnup 10
@@ -138,16 +155,17 @@
 20900 shot
 21000 btn 9
 21700 btnup 9
-# menus: SCALE, SYSTEM, COPY
+# menus: SCALE, SYSTEM (three on), COPY INIT (two back)
 21800 enc 0 1
 21900 enc 2 3
 22000 enc 3 4
 22300 shot
 23000 enc 0 1
+23050 enc 0 1
 23100 enc 0 1
 23200 enc 2 1
 23500 shot
-24000 enc 0 -1
+24000 enc 0 -2
 24100 enc 2 1
 24400 shot
 26000 end

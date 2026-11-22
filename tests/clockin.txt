@@ -3,11 +3,8 @@
 # buttons: 7 GLO 8 HOME 12 PLAY   encoders: 5 KNOB4   keys 0x91: a chord   (input starts after the 1.2 s splash)
 1300 btn 7
 1320 btnup 7
-1340 btn 7
-1360 btnup 7
-1380 btn 7
-1400 btnup 7
-1500 enc 5 1
+1400 enc 0 3
+1500 enc 3 1
 1600 btn 8
 1620 btnup 8
 1700 keys 0x91

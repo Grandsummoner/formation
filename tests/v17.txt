@@ -1,0 +1,96 @@
+# Formation host test, v1.7: a tour of the new screens. buttons: 0 OCT- 1 OCT+ 2 FX 3 SEL(freeze) 4 ENV 5 LFO 7 GLO 8 HOME 9 SAVE 12 PLAY 13 REC
+# encoders: 0 SELECT 1 ALGORITHM 2..5 KNOB1..4 6 PRESETS   keys 0x91: a chord
+1000 keys 0x91
+1100 btn 12
+1120 btnup 12
+1700 btn 2
+1720 btnup 2
+2000 shot
+2200 enc 0 1
+2500 shot
+2700 enc 0 1
+3000 shot
+3200 enc 0 3
+3500 shot
+3700 enc 0 1
+4000 shot
+4200 keys 0x1091
+4500 shot
+4700 keys 0x91
+4800 btn 4
+4820 btnup 4
+5100 shot
+5200 enc 2 6
+5250 enc 3 -9
+5300 enc 5 7
+5600 shot
+5800 btn 5
+5820 btnup 5
+6100 shot
+6200 enc 2 2
+6250 enc 3 3
+6300 enc 4 40
+6350 enc 5 5
+6700 shot
+6900 enc 0 1
+6950 enc 3 -2
+7000 enc 2 3
+7050 enc 4 90
+7400 shot
+7600 enc 0 4
+7650 enc 3 2
+7700 enc 2 4
+7750 enc 4 120
+8100 shot
+8300 btn 7
+8320 btnup 7
+8600 shot
+8700 enc 0 2
+9000 shot
+9100 btn 8
+9120 btnup 8
+9400 enc 0 1
+9700 shot
+9900 enc 0 1
+9950 enc 2 4
+10300 shot
+10500 enc 0 1
+10600 enc 3 1
+10650 enc 2 1
+10700 enc 3 1
+10750 enc 4 1
+10800 enc 5 1
+11100 shot
+11150 enc 5 -1
+11300 enc 0 1
+11600 shot
+11800 enc 0 1
+11850 enc 2 1
+12200 shot
+12400 enc 3 1
+12700 shot
+16000 enc 2 5
+16300 shot
+19000 btn 9
+19020 btnup 9
+19400 shot
+19600 btn 9
+19620 btnup 9
+19800 btn 13
+19820 btnup 13
+20000 shot
+23000 shot
+23200 btn 3
+23220 btnup 3
+23500 shot
+23600 btn 3
+23620 btnup 3
+24000 btn 12
+25200 shot
+25400 btn 0
+25410 btn 1
+25800 btnup 12
+25810 btnup 0
+25820 btnup 1
+26200 shot
+27000 end

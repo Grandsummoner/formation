@@ -7,12 +7,7 @@
 1600 enc 2 -700
 2000 shot
 2100 enc 2 400
-2400 btn 7
-2420 btnup 7
-2440 btn 7
-2460 btnup 7
-2480 btn 7
-2500 btnup 7
+2400 enc 0 4
 2600 enc 2 1
 2620 enc 2 1
 2640 enc 3 -1
