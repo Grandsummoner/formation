@@ -18,7 +18,7 @@ walk, reverse, skipping). **Legato** sets how long notes last. **Density** raise
 Scene A plays on MIDI channel 1 and scene B on channel 2 (GLO page); the crossfade moves note velocity (and the
 sound) from A to B with an equal-power curve.
 
-The sound is the FM-1's own: 27 instruments per scene, through a delay and a small stereo reverb, each scene placed in the stereo
+The sound is the FM-1's own: 27 instruments per scene, each through a delay and a small stereo reverb of its own (and an envelope you can reshape), each scene placed in the stereo
 field by its PAN. The first eleven are small and cheap: ANALOG, FM, SUPERSAW, PULSE, E PIANO, BELL, PLUCK, ORGAN, BASS, PAD,
 BRASS. The next sixteen share one synth engine (oscillators, a resonant two-pole low-pass that the level envelope opens, the
 timbre knob moving the cutoff) and are voiced after the character of classic synths, not copies of them: PROPHET 5 (two saws,
@@ -39,9 +39,13 @@ DSP figure (it shows in the footer from 60 %, in amber, and red from 80 %).
   opens, with the value you are turning lit; it closes by itself about two seconds after you stop. Buttons and the other
   knobs (PLAY, MODE, the crossfade, a saved slot ...) show a one-line message in place of the footer's first line, in the
   colour of the scene it is about.
-* **Pages**: some buttons open a page of two halves, four values each. **Knobs 1 to 4** turn the four values of the lit
-  half (the one with the bright frame). Press the same button again to move to the next half, then the next page, and
-  after the last one back to the performance screen.
+* **Pages**: the buttons HOME, FX, ENV, LFO and GLO open a page of two halves, four values each. **Knobs 1 to 4** turn the four values of the
+  lit half (the one with the bright frame). **SELECT** goes through the halves, and so the pages, of the group you are in, and round again at the end;
+  tiny **dots** at the top right show where you are (they fill up to the page you are on, all of them on the last). Press the same
+  button again, or HOME, to go back to the performance screen; a page you leave alone for **10 seconds** closes by itself. SELECT works as the menus
+  (below) only on the performance screen.
+* **Beginner text** (SYSTEM 2 menu, HELP TEXT): while it is on, each knob you turn brings a short note on what it does, in the bottom third of
+  the screen, for four seconds.
 * **LED flashes**: the LED of what an action was about blinks for under a second, as the plugin flashes its buttons. A
   save makes the slot's key and SAVE blink fast; a recall makes them blink slowly (a recall waits for the end of the measure
   while it plays); a copy or an init flashes the two scene keys (or the one) and SAVE; a randomise flashes the scene's key
@@ -59,9 +63,15 @@ DSP figure (it shows in the footer from 60 %, in amber, and red from 80 %).
 | Button | Its pages (top half / bottom half) |
 | --- | --- |
 | **HOME** | GENERATE: entropy, harmony, chaos, morph / RHYTHM: rest, density, swing, legato |
-| **FX** | VOICE A: instrument, timbre, delay, level / VOICE B: the same for scene B; then REVERB: send of A, send of B, size, bright / DELAY: time (1/16, 1/8, 1/8 dotted, 1/4), feedback, tone; then MIX: PAN A and PAN B (L to R, C in the middle) |
-| **LFO** | speed and depth of the six LFOs, two parameters a half: MORPH REST / LEGATO ENTROPY / HARMONY CHAOS |
-| **GLO** | TEMPO KEY: BPM (1 to 480), step division, transpose, theme / SCALE MIDI: root, scale, MIDI channel of A and of B; then CHORD SYNC: CHORD (STACK, SUS, QUART, ADD9), SPREAD (AUTO, CLOSE, OPEN) and SYNC (the MIDI sync out: OFF, START for start and stop only, or CLOCK for the 24-a-beat clock as well) and CLOCK (where the tempo comes from: INT, EXT or AUTO). Knobs 1 to 4 turn them; then AUTO A-B: AUTO (OFF, ONCE, PING, SAW), BARS (1, 2, 4, 8, 16, 32 or 64) and SHAPE (LINEAR or EASE); then MIDI IN LOOK: CC IN and PROG (on or off), COLOUR (SOFT, RICH, WILD) and METER (on or off). |
+| **FX** | Each voice has its own chain. A VOICE: instrument, timbre, level / A DELAY: send, time (1/16, 1/8, 1/8 dotted, 1/4), feedback, tone; then A REVERB: send, size, bright; then the same three for B; the last page ends with MIX: PAN A and PAN B (L to R, C in the middle). **The lower keys are punch-ins here** (below). |
+| **ENV** | A ENVELOPE / B ENVELOPE: ATTACK, DECAY, SUSTAIN, RELEASE of each voice. Each starts as its instrument's own envelope and is relative to it: the knob moves it up and down (each 20 steps double or halve a time; the sustain is a level), and the page shows the time in ms or s. A new instrument starts again from its own. |
+| **LFO** | Six pages, one for each LFO (MORPH, REST, LEGATO, ENTROPY, HARMONY, CHAOS): on top the wave, drawn with a dot where the LFO is now; below its SHAPE (SINE, TRI, SAW, RAMP, SQUARE, RANDOM), RATE (OFF, then 4 BAR, 2 BAR, 1 BAR, 1/2, 1/4, 1/8, 1/16, 1/32 of the tempo), DEPTH and PHASE (where in its wave it starts). The LFOs start from their phase each time PLAY is pressed. |
+| **GLO** | TEMPO KEY: BPM (1 to 480), step division, transpose, theme / SCALE MIDI: root, scale, MIDI channel of A and of B; then CHORDS: POLY (chords from Harmony), CHORD (STACK, SUS, QUART, ADD9), SPREAD (AUTO, CLOSE, OPEN) / SYNC: SYNC (the MIDI sync out: OFF, START for start and stop only, or CLOCK for the 24-a-beat clock as well) and CLOCK (where the tempo comes from: INT, EXT or AUTO); then AUTO A-B: AUTO (OFF, ONCE, PING, SAW), BARS (1, 2, 4, 8, 16, 32 or 64) and SHAPE (LINEAR or EASE) / MIDI IN LOOK: CC IN and PROG (on or off), COLOUR (SOFT, RICH, WILD) and METER (on or off). |
+
+**Punch-ins.** While an FX page is open the 16 lower keys are momentary effects on the voice the page is about (both on MIX), for as long as you hold them:
+THROW (all of it into the delay), REPEAT (long feedback), DLY 1/16, DLY 1/4, BLOOM (reverb send up), HALL (big reverb), DARK, AIR (the reverb's tone),
+CLOSE and OPEN (the timbre), DUCK (quieter), KILL (silent), LONG and SHORT (the release longer or shorter), SLOW (a slow attack for new notes) and FLIP (the pan to the other side).
+Let go and everything is as it was. (On the SAVE and RECALL screens the keys are slots, as ever.)
 
 On the performance screen the knobs turn the RHYTHM values: **Knob 1** rest (or, with a step key held, that step's level),
 **Knob 2** density, **Knob 3** swing, **Knob 4** legato. Turn a knob fast and it takes bigger steps.
@@ -79,10 +89,15 @@ On the performance screen the knobs turn the RHYTHM values: **Knob 1** rest (or,
 
 | Button | What |
 | --- | --- |
-| **PLAY** | Start / stop the clock. |
+| **PLAY** | Start / stop the clock. **Hold it for a second: PANIC.** The screen asks for OCT- and OCT+ together within four seconds; then everything stops: the sequencer, all notes (MIDI all-notes-off and all-sound-off on both channels as well), the echoes and the reverb, FREEZE, REC and the chain. Anything else, and nothing happens. |
 | **ARP** | ARP mode: notes come from the keys you hold (or are latched), or from the scale and root if none are held. **Long press: LATCH on / off.** |
 | **SEQ** | SEQ mode: loops eight stored notes (set them with a step key plus a lower key). |
-| **SEL** | POLY on / off (chords from Harmony). On the GLO page with BPM (TEMPO KEY) it taps the tempo instead: from the last four taps; a pause of two seconds starts again. |
+| **SEL** | **FREEZE**: locks the pitch pool and all the levels as they are now, rhythm and pitch together. Press again to release. (POLY is a cell on the GLO page, CHORDS; tapping the tempo is in the SYSTEM 2 menu.) |
+| **REC** | **Capture** one measure of what plays. Press: armed (it blinks); at the next measure it records eight steps (lit while it does); then the notes that sounded become the SEQ pattern of both scenes (a step that stayed silent is set to 0, one that sounded to 255) and the mode is SEQ. With REC KEEPS (SYSTEM 2) on +MOTION it also keeps where the six parameters and the density stood at each step, and SEQ plays that motion back (until a preset is recalled or a new capture is made). Press while armed or recording: cancel. **Long press: undo** the last capture. |
+| **EDIT** | **Randomise** the edited scene (step levels, rest, legato, morph, entropy, harmony, chaos). **Long press: AUTO ROLL**, a new roll at the start of every measure (lit while on, RND in the header). |
+| **OCT- / OCT+** | Octave, -3 to +3. |
+| **HOME, FX, ENV, LFO, GLO** | Pages, as above. |
+| **SAVE** | Short press: save mode (blinks). Pick a slot 1-16 with a lower key; SAVE again cancels. **Long press:** recall mode (stays lit): pick a slot and it starts at the end of the measure; long press again to leave. The screen then shows the 16 slots with their numbers: a filled square is a saved preset, an outline an empty slot, the bright one the last used. In the COPY INIT menu SAVE does the action; in SYSTEM 2 it taps the tempo. |
 
 **Clock: master or follower.** CLOCK on the CHORD SYNC page says who keeps the time. **INT**: Formation is the master: its BPM sets the tempo, SYNC
 sends the clock and Start / Stop out, and a clock that comes in is ignored. **EXT**: Formation follows the 24-a-beat MIDI clock that comes in on
@@ -128,12 +143,6 @@ CHORD (GLO page, CHORD SYNC) picks the kind: STACK is stacked thirds (triads and
 fourth, QUART stacks fourths, ADD9 is root, third, fifth and ninth. SPREAD is the voicing: CLOSE keeps the notes together,
 OPEN lifts the third and the seventh an octave (a wider, softer chord), AUTO opens the chords low down (below E3), where
 close thirds are muddy. CHAOS moves the whole chord an octave, never a single note out of it.
-| **REC** | FREEZE: locks the pitch pool and all the levels as they are now, rhythm and pitch together. Press again to release. |
-| **EDIT** | **Randomise** the edited scene (step levels, rest, legato, morph, entropy, harmony, chaos). **Long press: AUTO ROLL**, a new roll at the start of every measure (lit while on, RND in the header). |
-| **OCT- / OCT+** | Octave, -3 to +3. |
-| **HOME, FX, LFO, GLO** | Pages, as above. |
-| **SAVE** | Short press: save mode (blinks). Pick a slot 1-16 with a lower key; SAVE again cancels. **Long press:** recall mode (stays lit): pick a slot and it starts at the end of the measure; long press again to leave. Filled slots are lit. |
-| ENV | Not used yet. |
 
 ### Knobs
 
@@ -142,17 +151,27 @@ close thirds are muddy. CHAOS moves the whole chord an octave, never a single no
 | **Knobs 1-4** | The four values of the lit half, or the RHYTHM values on the performance screen (above). |
 | **ALGORITHM** | The A-to-B crossfade, on every screen. With AUTO A-B on, turning it moves the crossfade by hand and the automatic trip carries on from where you leave it. |
 | **PRESETS** | The edited scene's voice: MIDI only, then the 27 instruments in the order above. |
-| **SELECT** | Menus: SCALE and ROOT, COPY and INIT, SYSTEM (they go back after 2.5 seconds without a touch). |
+| **SELECT** | On a page: goes through its halves and pages. On the performance screen: the menus, in this order: SCALE and ROOT, COPY and INIT, CHAIN, SYSTEM, SYSTEM 2 (they go back after 2.5 seconds without a touch). |
 | **MASTER** | Volume. |
 
 ### COPY and INIT menu (SELECT)
 
-Knob 1 picks the action (copy A to B, copy B to A, init the edited scene, init everything); **SAVE** does it.
+Knob 1 picks the action: copy A to B, copy B to A, init the edited scene, init everything (the working state), **INIT SLOT** (knob 2 picks the slot, 1 to 16) or **INIT ALL SLOTS**. **SAVE** does the first four; the last two empty saved presets, so you **hold SAVE** for them.
+
+### CHAIN menu (SELECT)
+
+A song of up to eight steps, each a preset slot and a number of measures. Knob 1 picks the step, knob 2 its slot (turn left past slot 1 to empty the step), knob 3 its measures (1, 2, 4, 8 or 16), and knob 4 switches the chain ON or OFF.
+While it is on and the sequencer plays, each new measure is counted and, when a step's measures are up, the next step's preset is recalled; after the last step it starts again from the first, and a chain with nothing in it switches itself off.
+It starts from step 1 each time you press PLAY. The steps are kept with your working state; ON is not (it is off at power-on). CHN shows in the header while it is on.
 
 ### SYSTEM menu
 
 Theme (NAVY, MONO, MATRIX, SUNSET, AURORA, NEON), the MIDI channels of scene A and B, BLUETOOTH, and the DSP load: how much of the
 audio time the sound takes. Keep it under about 50 %; if it is higher, use fewer chords or the lighter voices.
+
+### SYSTEM 2 menu
+
+HELP TEXT (knob 1: the beginner text, on or off), REC KEEPS (knob 2: NOTES, or +MOTION) and TAP TEMPO: press SAVE in time, from the last four taps (a pause of two seconds starts again).
 
 **BLUETOOTH** (knob 4: right is on, left is off) sends everything Formation sends over USB over Bluetooth LE MIDI as
 well, and takes MIDI notes in from a connected device like USB's. It is **off at every power-on**. Switched on, the FM-1
@@ -177,15 +196,17 @@ count (the packets queued for it) once it listens; the performance screen shows 
 
 * **Morph** has no effect in the plugin's note engine; here it smears each step's probability into the next step's.
 * **Legato** sets the note length here (10 % to 95 % of a step); in the plugin it reduces the rests.
-* The plugin's Rate and Octaves LFOs are not here (six LFOs: Morph, Rest, Legato, Entropy, Harmony, Chaos).
+* The plugin's Rate and Octaves LFOs are not here (six LFOs: Morph, Rest, Legato, Entropy, Harmony, Chaos; each with a shape, a rate from 4 bars to 1/32, a depth and a phase).
 * Chords come from the scale, as in the plugin; the held notes are the arp's pool.
 * USB and Bluetooth MIDI notes (any channel) are accepted like keys. **MIDI sync out**: PLAY sends MIDI Start and
   stopping sends Stop; with SYNC at CLOCK it also sends the 24-a-beat clock at the BPM, to USB and Bluetooth (GLO page).
 * Presets are kept in their own flash sector, your working state is saved by itself when the sound is quiet.
-* The effects are a mono delay (time, feedback and tone on the FX page, DELAY half; each scene's send is on its VOICE
-  page) and a stereo reverb (REVERB half: a send for each scene, size, bright). Reverb and delay settings: the reverb's
-  four values are part of a preset; the delay's three and the sync setting are kept with your working state.
-* The reverb uses a few percent of the chip's time while it runs (it stops by itself about four seconds after the sound
-  ends, and when both sends are 0): watch DSP LOAD in the SYSTEM menu. E PIANO, BELL and ORGAN cost the most of the
+* Each voice has its own effects: a mono delay (send, time, feedback and tone: the DELAY half of its FX pages, up to about 0.74 s, so the
+  1/4 delay is held at 0.74 s below 81 BPM) and a stereo reverb (send, size, bright: its REVERB half), both part of the preset, with the voice's
+  envelope (ENV) and each LFO's shape and phase. The voice and its delay sit where its PAN puts them, the reverb is stereo.
+* Each reverb uses a few percent of the chip's time while it runs (it stops by itself about four seconds after its voice's sound
+  ends, and when its send is 0): watch DSP LOAD in the SYSTEM menu. E PIANO, BELL and ORGAN cost the most of the
   voices (about as much as FM).
-* A preset saved before the reverb existed gets the reverb's default settings when you recall it.
+* Presets and settings saved by v1.0 to v1.6 are read and converted when you recall them: the one reverb and the one delay of those versions
+  become the same settings on both voices, ENV is the instrument's own and the LFOs are sines at phase 0, as they were. The first preset you save
+  afterwards writes the new layout.

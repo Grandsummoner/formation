@@ -38,7 +38,9 @@ static const char *const INST_NAME[28] = {"MIDI ONLY", "ANALOG", "FM", "SUPERSAW
                                           "VIRUS SAW", "SH-101", "ACID 303", "STRINGS", "CS-80 BRASS", "DX BASS", "CLAVINET", "VIBES",
                                           "PWM PAD", "BREATH", "HOOVER", "WOBBLE BASS"};
 static const char *const DIV_NAME[4] = {"1/4", "1/8", "1/16", "1/32"};
-static const char *const LFO_RATE[5] = {"OFF", "1/4", "1/8", "1/16", "1/32"};
+static const char *const LFO_RATE[9] = {"OFF", "1/4", "1/8", "1/16", "1/32", "1/2", "1 BAR", "2 BAR", "4 BAR"};   /* by the stored value: 1..4 are a beat, a half, a quarter, an eighth of a beat; 5..8 are 2, 4, 8, 16 beats */
+static const uint8_t LFO_POS[9] = {0, 8, 7, 6, 5, 1, 2, 3, 4};              /* the order the rate knob goes through, slow to fast: the stored value at each place */
+static const char *const LFO_SHAPE[6] = {"SINE", "TRI", "SAW", "RAMP", "SQUARE", "RANDOM"};
 static const char *const PNAME[6] = {"MORPH", "REST", "LEGATO", "ENTROPY", "HARMONY", "CHAOS"};
 
 static const uint32_t INC_C9[12] = {            /* MIDI 120..131 (C9..B9); lower octaves shift right */
@@ -51,26 +53,41 @@ typedef struct {
     uint8_t p[6];                               /* MORPH REST LEGATO ENTROPY(127 = 0) HARMONY CHAOS, 0..255 */
     uint8_t inst, timbre, dsend, level;         /* the scene's voice */
     uint8_t seq[8];                             /* SEQ mode: the notes of the pattern */
-} scene_t;                                      /* 26 B */
+    uint8_t env[4];                             /* ATTACK DECAY SUSTAIN RELEASE, 128 = what the instrument has (the others are relative to it) */
+    uint8_t dtime, dfb, dtone;                  /* this voice's delay: time (1/16 1/8 1/8. 1/4), feedback, tone (the send is dsend) */
+    uint8_t rsend, rsize, rtone;                /* this voice's reverb: send, size, bright */
+} scene_t;                                      /* 36 B */
 typedef struct {
     scene_t sc[2];
     uint8_t lfo_rate[6], lfo_depth[6];
+    uint8_t lfo_sp[6];                          /* each LFO's shape (bits 0..2) and phase (bits 3..7, in 32nds of a cycle) */
     uint8_t morph_pos, density, swing, bpm, div, scale, root, poly, mode;
     int8_t oct, tr;
-    uint8_t used, rv[4];                        /* rv: reverb send A, send B, size, tone (0 0 0 0: an old preset, see rv_legacy) */
-} preset_t;                                     /* 80 B */
+    uint8_t used, rsv[4];
+} preset_t;                                     /* 102 B */
+/* the presets and the settings of v1.0 .. v1.6 (a scene 26 B, a preset 80 B, one reverb for both scenes, one delay): read, then converted */
+typedef struct { uint8_t fader[8], p[6], inst, timbre, dsend, level, seq[8]; } scene16_t;
+typedef struct {
+    scene16_t sc[2];
+    uint8_t lfo_rate[6], lfo_depth[6];
+    uint8_t morph_pos, density, swing, bpm, div, scale, root, poly, mode;
+    int8_t oct, tr;
+    uint8_t used, rv[4];                        /* rv: reverb send A, send B, size, tone (0 0 0 0: a preset from before the reverb) */
+} preset16_t;
 enum { MODE_ARP = 0, MODE_SEQ = 1 };
 enum { INST_MIDI = 0, INST_ANALOG, INST_FM, INST_SAW, INST_PULSE, INST_EPIANO, INST_BELL, INST_PLUCK, INST_ORGAN, INST_BASS,
        INST_PAD, INST_BRASS, INST_PROPHET, INST_MOOG, INST_JUNO, INST_SYNC, INST_VIRUS, INST_SH101, INST_ACID, INST_STRINGS,
        INST_CS80, INST_DXBASS, INST_CLAV, INST_VIBES, INST_PWMPAD, INST_BREATH, INST_HOOVER, INST_WOBBLE, NINST };
 
-/* what is not in a preset: the delay's character and the MIDI sync out */
-static struct { uint8_t dtime, dfb, dtone, sync, chord, voic, amode, abars, ashp, csrc, cmode, meter, ccin, pcin, pana, panb; } fxs =
-    {2, 100, 255, 2, 0, 0, 0, 2, 0, 0, 1, 1, 1, 1, 128, 128};   /* csrc: the clock: 0 internal, 1 external, 2 auto */
-/* dtime, dfb, dtone: the delay (time 1/16 1/8 1/8. 1/4, feedback, tone); sync: SYNC OUT 0 off, 1 start/stop, 2 + clock; chord, voic: the chord type and its voicing;
+/* what is not in a preset: the MIDI sync out, the clock, the look, the pans, the beginner text, what REC keeps */
+static struct { uint8_t sync, chord, voic, amode, abars, ashp, csrc, cmode, meter, ccin, pcin, pana, panb, hint, recm; } fxs =
+    {2, 0, 0, 0, 2, 0, 0, 1, 1, 1, 1, 128, 128, 0, 0};   /* csrc: the clock: 0 internal, 1 external, 2 auto */
+/* sync: SYNC OUT 0 off, 1 start/stop, 2 + clock; chord, voic: the chord type and its voicing;
  * amode, abars, ashp: AUTO A-B (off / once / ping-pong / saw; 2^abars bars a trip; linear / ease); csrc: the clock (internal / external / auto);
  * cmode: the colours (0 SOFT, 1 RICH, 2 WILD); meter: the level meter on the performance screen; ccin, pcin: MIDI control change and program change in;
- * pana, panb: where each scene sits in the stereo field (128 = middle) */
+ * pana, panb: where each scene sits in the stereo field (128 = middle); hint: the beginner text (a note for each knob you touch);
+ * recm: what REC captures (0 the notes, 1 the notes and the parameters' motion) */
+static uint8_t leg_dly[3] = {2, 100, 255};     /* the delay of a v1.0 .. v1.6 record (time, feedback, tone): the presets of that time take it */
 static const uint32_t DT_K[4] = {661500u, 1323000u, 1984500u, 2646000u};   /* 44100 * 60 * (1/4 1/2 3/4 1 beat): the delay in samples = K / bpm */
 
 static preset_t cur;                            /* the state you play */
@@ -89,6 +106,9 @@ static void scene_init(scene_t *s, int b)
     s->timbre = b ? 70 : 128;
     s->dsend = 60;
     s->level = b ? 150 : 170;
+    s->env[0] = s->env[1] = s->env[2] = s->env[3] = 128;
+    s->dtime = 2; s->dfb = 100; s->dtone = 255;
+    s->rsend = 40; s->rsize = 170; s->rtone = 160;
 }
 /* the tempo: 1 .. 480 BPM. The low 8 bits are in bpm, the high 2 in used (bits 1 and 2; bit 0 is the slot's used flag), so a preset
  * saved when the tempo was 40 .. 240 in a byte reads as it did. */
@@ -112,11 +132,23 @@ static void preset_init(preset_t *p)
     scene_init(&p->sc[0], 0);
     scene_init(&p->sc[1], 1);
     p->density = 128; bpm_set(p, 80); p->div = 2; p->scale = 1; p->root = 0; p->mode = MODE_ARP;
-    p->rv[0] = 40; p->rv[1] = 40; p->rv[2] = 170; p->rv[3] = 160;
 }
-static void rv_legacy(preset_t *p)              /* a preset saved before the reverb existed has all four at 0: give it the defaults */
+static void preset_from16(preset_t *d, const preset16_t *o)     /* a preset of v1.0 .. v1.6 in the new layout */
 {
-    if (!(p->rv[0] | p->rv[1] | p->rv[2] | p->rv[3])) { p->rv[0] = 40; p->rv[1] = 40; p->rv[2] = 170; p->rv[3] = 160; }
+    uint32_t i;
+    int legacy = !(o->rv[0] | o->rv[1] | o->rv[2] | o->rv[3]);   /* saved before the reverb existed: its defaults */
+    preset_init(d);
+    for (i = 0; i < 2u; i++) {
+        scene_t *s = &d->sc[i];
+        const scene16_t *q = &o->sc[i];
+        memcpy(s->fader, q->fader, sizeof s->fader); memcpy(s->p, q->p, sizeof s->p); memcpy(s->seq, q->seq, sizeof s->seq);
+        s->inst = q->inst; s->timbre = q->timbre; s->dsend = q->dsend; s->level = q->level;
+        s->dtime = (uint8_t)(leg_dly[0] & 3u); s->dfb = leg_dly[1] > 230u ? 230u : leg_dly[1]; s->dtone = leg_dly[2];
+        if (!legacy) { s->rsend = o->rv[i]; s->rsize = o->rv[2]; s->rtone = o->rv[3]; }
+    }
+    memcpy(d->lfo_rate, o->lfo_rate, sizeof d->lfo_rate); memcpy(d->lfo_depth, o->lfo_depth, sizeof d->lfo_depth);
+    d->morph_pos = o->morph_pos; d->density = o->density; d->swing = o->swing; d->bpm = o->bpm; d->div = o->div; d->scale = o->scale;
+    d->root = o->root; d->poly = o->poly; d->mode = o->mode; d->oct = o->oct; d->tr = o->tr; d->used = o->used;
 }
 
 /* ================================================================== 2. the sound (audio ISR) */
@@ -129,20 +161,23 @@ static void rv_legacy(preset_t *p)              /* a preset saved before the rev
 typedef struct {
     volatile uint32_t inc, serial;
     volatile int32_t lvl;
-    volatile uint8_t gate, inst, tim;
+    volatile uint32_t eatk, edec, erel;         /* the envelope: attack, decay, release in samples (the main loop sets them: ENV of the scene, the instrument's own as the base) */
+    volatile uint8_t gate, inst, tim, esus;     /* esus: the sustain level, 0..255 */
     uint32_t seen, ph, ph2, ph3, phx[4], age, rng;   /* ISR only from here */
     int32_t amp, lp, f2, rel;
     uint8_t st;                                 /* 0 idle, 1 attack, 2 decay / sustain, 3 release */
 } slot_t;
 static slot_t sl[NSL];
-static volatile int32_t gain_a, gain_b, ds_a, ds_b, dly_len, dly_fb, dly_k, rv_a, rv_b, rv_g, rv_k, pan_la = 255, pan_ra = 255, pan_lb = 255, pan_rb = 255;
+/* each voice (scene) has its own chain: the delay (send, time, feedback, tone), the reverb (send, size, bright), the pan; the main loop writes, the ISR reads */
+static volatile int32_t gain_v[2], ds_v[2], dly_len_v[2] = {22000, 22000}, dly_fb_v[2], dly_k_v[2], rv_s[2], rv_g[2], rv_k[2], pan_l[2] = {255, 255}, pan_r[2] = {255, 255};
 static volatile uint32_t meter_l, meter_r;      /* the loudest sample of each side since the screen last looked */
 static volatile uint8_t busy;
 static volatile uint32_t dsp_max;               /* the longest app_audio block since the last look, in 24 MHz ticks */
 static int32_t bufa[HALF_FRAMES], bufb[HALF_FRAMES];
-static int16_t dly[65536] __attribute__((section(".pool")));
+#define DLN 32768u                              /* a delay line: 0.74 s, one for each voice */
+static int16_t dly[2][DLN] __attribute__((section(".pool")));
 static uint32_t dly_w;
-static int32_t dly_lp;
+static int32_t dly_lp[2];
 
 /* the envelope of each instrument, in samples at 44.1 kHz: attack, decay to the sustain, release; sustain in tenths */
 static const struct { uint32_t atk, dec, rel; uint8_t sus; } ENV[NINST] = {
@@ -174,6 +209,23 @@ static const struct { uint32_t atk, dec, rel; uint8_t sus; } ENV[NINST] = {
     {3000, 20000, 8000, 8},  /* BREATH */
     {300, 25000, 6000, 7},   /* HOOVER */
     {120, 12000, 4000, 7}};  /* WOBBLE BASS */
+/* the ENV page: each of the four values is a byte, 128 = what the instrument has, each step of 20 doubles or halves it (+- 6 octaves) */
+static const uint16_t POW20[20] = {1024, 1060, 1097, 1135, 1175, 1217, 1260, 1304, 1350, 1397, 1446, 1497, 1550, 1604, 1660, 1719, 1779, 1842, 1906, 1973};   /* 1024 * 2^(k/20) */
+static uint32_t env_scale(uint32_t def, uint32_t v, uint32_t lo, uint32_t hi)
+{
+    int32_t n = (int32_t)v - 128, o = n >= 0 ? n / 20 : -((-n + 19) / 20), k = n - o * 20;
+    uint32_t x = (def * (uint32_t)POW20[k]) >> 10;
+    if (o > 0) x = x > (hi >> o) ? hi : x << o;
+    else if (o < 0) x >>= -o;
+    return x < lo ? lo : x > hi ? hi : x;
+}
+#define ATK_MAX 88200u                          /* 2 s */
+#define DEC_MAX 441000u                         /* 10 s */
+#define REL_MAX 441000u
+static uint32_t env_atk(uint32_t inst, uint32_t v) { return env_scale(ENV[inst % NINST].atk, v, 8u, ATK_MAX); }
+static uint32_t env_dec(uint32_t inst, uint32_t v) { return env_scale(ENV[inst % NINST].dec, v, 1u, DEC_MAX); }
+static uint32_t env_rel(uint32_t inst, uint32_t v) { return env_scale(ENV[inst % NINST].rel, v, 8u, REL_MAX); }
+static uint32_t env_sus(uint32_t inst, uint32_t v) { return (uint32_t)clampi((int32_t)ENV[inst % NINST].sus * 255 / 10 + ((int32_t)v - 128) * 2, 0, 255); }
 static const uint16_t IGAIN[NINST] = {256, 256, 256, 256, 256, 270, 210, 300, 290, 256, 330, 290,
                                       333, 460, 280, 256, 512, 560, 360, 512, 486, 256, 512, 205, 294, 400, 384, 282};   /* loudness of each, 256 = 1 (measured on the host: about the same level as ANALOG) */
 
@@ -214,12 +266,12 @@ static void render_slot(slot_t *s, int32_t *buf, uint32_t n)
     }
     if (!s->gate && (st == 1 || st == 2)) {     /* released */
         st = 3;
-        s->rel = amp / (int32_t)ENV[inst].rel + 1;
+        s->rel = amp / (s->erel ? (int32_t)s->erel : 1) + 1;
     }
     if (!st) return;
-    susq = (lvlq / 10) * ENV[inst].sus;
-    atk = lvlq / (int32_t)ENV[inst].atk + 1;
-    dec = (lvlq - susq) / (int32_t)ENV[inst].dec + 1;
+    susq = (lvlq >> 8) * (int32_t)s->esus;
+    atk = lvlq / (s->eatk ? (int32_t)s->eatk : 1) + 1;
+    dec = (lvlq - susq) / (s->edec ? (int32_t)s->edec : 1) + 1;
     k = 1500 + (int32_t)s->tim * 105;
     ix = ((int32_t)s->tim + 1) * 256;
     width = 644245094u + (uint32_t)s->tim * 11790106u;
@@ -394,70 +446,84 @@ static void render_slot(slot_t *s, int32_t *buf, uint32_t n)
  * fed back through a Householder matrix (I - 1/2 of all ones: it loses no energy, so the decay is the gain g and the
  * damping); the left output takes lines 0 and 2, the right 1 and 3 */
 #define RVN 2048u
-static int16_t rv_d[4][RVN] __attribute__((section(".pool")));
-static int16_t ap_d[2][256] __attribute__((section(".pool")));
+static int16_t rv_d[2][4][RVN] __attribute__((section(".pool")));      /* a reverb for each voice */
+static int16_t ap_d[2][2][256] __attribute__((section(".pool")));
 static const uint16_t RV_LEN[4] = {1171, 1307, 1523, 1789};
 static const uint16_t AP_LEN[2] = {149, 239};
-static uint32_t rv_w, ap_w, rv_run;
-static int32_t rv_lp[4];
+static uint32_t rv_w[2], ap_w[2], rv_run[2];
+static int32_t rv_lp[2][4];
 
-static void reverb(int32_t x, int32_t g, int32_t k, int32_t *l, int32_t *r)
+static void reverb(uint32_t vc, int32_t x, int32_t g, int32_t k, int32_t *l, int32_t *r)
 {
-    uint32_t w = rv_w, aw = ap_w, i;
+    uint32_t w = rv_w[vc], aw = ap_w[vc], i;
     int32_t t[4], sm, d, u;
-    d = ap_d[0][(aw - AP_LEN[0]) & 255u];
+    d = ap_d[vc][0][(aw - AP_LEN[0]) & 255u];
     u = x - (d >> 1);
-    ap_d[0][aw & 255u] = (int16_t)clampi(u, -32767, 32767);
+    ap_d[vc][0][aw & 255u] = (int16_t)clampi(u, -32767, 32767);
     x = d + (u >> 1);
-    d = ap_d[1][(aw - AP_LEN[1]) & 255u];
+    d = ap_d[vc][1][(aw - AP_LEN[1]) & 255u];
     u = x - (d >> 1);
-    ap_d[1][aw & 255u] = (int16_t)clampi(u, -32767, 32767);
+    ap_d[vc][1][aw & 255u] = (int16_t)clampi(u, -32767, 32767);
     x = d + (u >> 1);
-    ap_w = aw + 1u;
+    ap_w[vc] = aw + 1u;
     for (i = 0; i < 4u; i++) {
-        int32_t y = rv_d[i][(w - RV_LEN[i]) & (RVN - 1u)];
-        rv_lp[i] += ((y - rv_lp[i]) * k) >> 15;
-        t[i] = rv_lp[i];
+        int32_t y = rv_d[vc][i][(w - RV_LEN[i]) & (RVN - 1u)];
+        rv_lp[vc][i] += ((y - rv_lp[vc][i]) * k) >> 15;
+        t[i] = rv_lp[vc][i];
     }
     sm = (t[0] + t[1] + t[2] + t[3]) >> 1;
     for (i = 0; i < 4u; i++) {
         int32_t f = (((t[i] - sm) >> 1) * (g >> 1)) >> 13;
-        rv_d[i][w & (RVN - 1u)] = (int16_t)clampi(x + f, -32767, 32767);
+        rv_d[vc][i][w & (RVN - 1u)] = (int16_t)clampi(x + f, -32767, 32767);
     }
-    rv_w = w + 1u;
+    rv_w[vc] = w + 1u;
     *l = (t[0] + t[2]) >> 1;
     *r = (t[1] + t[3]) >> 1;
 }
 
 static void app_audio(int32_t *out, uint32_t n)
 {
-    uint32_t v, i, any = 0, t0 = fm1_ticks(), run;
-    int32_t ga = gain_a, gb = gain_b, da = ds_a, db = ds_b, len = dly_len, fb = dly_fb, dk = dly_k;
-    int32_t ra = rv_a, rb = rv_b, rg = rv_g, rk = rv_k, pla = pan_la, pra = pan_ra, plb = pan_lb, prb = pan_rb;
+    uint32_t v, i, any[2] = {0, 0}, t0 = fm1_ticks(), run[2], c;
+    int32_t gv[2] = {gain_v[0], gain_v[1]}, dsv[2] = {ds_v[0], ds_v[1]}, len[2] = {dly_len_v[0], dly_len_v[1]}, fb[2] = {dly_fb_v[0], dly_fb_v[1]},
+            dk[2] = {dly_k_v[0], dly_k_v[1]}, rs[2] = {rv_s[0], rv_s[1]}, rg[2] = {rv_g[0], rv_g[1]}, rk[2] = {rv_k[0], rv_k[1]},
+            pl[2] = {pan_l[0], pan_l[1]}, pr[2] = {pan_r[0], pan_r[1]};
     uint32_t ml = 0, mr = 0;
     memset(bufa, 0, sizeof bufa);
     memset(bufb, 0, sizeof bufb);
     for (v = 0; v < NSL; v++) {
         render_slot(&sl[v], v < 4u ? bufa : bufb, n);
-        any |= sl[v].st;
+        any[v >> 2] |= sl[v].st;
     }
-    busy = (uint8_t)(any != 0u);
-    run = rv_run;
-    if ((ra | rb) && any) run = 700u;                                       /* the tail goes on for about four seconds */
-    else if (run) run--;
-    rv_run = run;
+    busy = (uint8_t)((any[0] | any[1]) != 0u);
+    for (c = 0; c < 2u; c++) {
+        run[c] = rv_run[c];
+        if (rs[c] && any[c]) run[c] = 700u;                                 /* the tail goes on for about four seconds */
+        else if (run[c]) run[c]--;
+        rv_run[c] = run[c];
+    }
     for (i = 0; i < n; i++) {
-        int32_t a = (bufa[i] * ga) >> 7, b = (bufb[i] * gb) >> 7, d, in, sl, sr, rl = 0, rr = 0, ol, or_;
-        d = dly[(dly_w - (uint32_t)len) & 0xFFFFu];
-        dly_lp += ((d - dly_lp) * dk) >> 15;
-        d = dly_lp;
-        in = ((a * da + b * db) >> 8) + ((d * fb) >> 8);
-        dly[dly_w & 0xFFFFu] = (int16_t)clampi(in, -32767, 32767);
+        int32_t x[2], sl_ = 0, sr_ = 0, rl = 0, rr_ = 0, ol, or_;
+        x[0] = (bufa[i] * gv[0]) >> 7;
+        x[1] = (bufb[i] * gv[1]) >> 7;
+        for (c = 0; c < 2u; c++) {
+            int32_t dl, in, a, b;
+            dl = dly[c][(dly_w - (uint32_t)len[c]) & (DLN - 1u)];
+            dly_lp[c] += ((dl - dly_lp[c]) * dk[c]) >> 15;
+            dl = dly_lp[c];
+            in = ((x[c] * dsv[c]) >> 8) + ((dl * fb[c]) >> 8);
+            dly[c][dly_w & (DLN - 1u)] = (int16_t)clampi(in, -32767, 32767);
+            a = (x[c] * pl[c]) >> 8;                                        /* the voice where its PAN puts it, its delay with it (half as loud) */
+            b = (x[c] * pr[c]) >> 8;
+            sl_ += a + ((dl * pl[c]) >> 9);
+            sr_ += b + ((dl * pr[c]) >> 9);
+            if (run[c]) {
+                int32_t ql, qr;
+                reverb(c, (x[c] * rs[c]) >> 8, rg[c], rk[c], &ql, &qr);
+                rl += ql; rr_ += qr;
+            }
+        }
         dly_w++;
-        sl = ((a * pla + b * plb) >> 8) + (d >> 1);                         /* each scene where its PAN puts it, the delay in the middle */
-        sr = ((a * pra + b * prb) >> 8) + (d >> 1);
-        if (run) reverb((a * ra + b * rb) >> 8, rg, rk, &rl, &rr);
-        ol = sl + rl; or_ = sr + rr;
+        ol = sl_ + rl; or_ = sr_ + rr_;
         out[2u * i] += ol;
         out[2u * i + 1u] += or_;
         if ((uint32_t)(ol < 0 ? -ol : ol) > ml) ml = (uint32_t)(ol < 0 ? -ol : ol);
@@ -468,33 +534,68 @@ static void app_audio(int32_t *out, uint32_t n)
     t0 = fm1_ticks() - t0;
     if (t0 > dsp_max) dsp_max = t0;
 }
-
 /* ================================================================== 3. MIDI and notes (main loop) */
 static uint32_t slot_note[NSL], rr[2];
 static uint32_t wa, wb;                         /* the scene weights now: 100 * cos / sin of the morph */
 
+#define CHAIN_N 8
+static uint32_t kill_until;                     /* PANIC: until then every note releases fast, the echoes and the reverb are shut */
+static uint16_t pi_mask;                        /* the punch-in keys held now (bit k = lower key k), only while the FX pages are open */
+static uint8_t pi_voice = 2;                    /* the voice they act on: 0 A, 1 B, 2 both (the voice the FX page shows) */
+
+static void slot_env(uint32_t sc, slot_t *s)    /* a voice's envelope and timbre into a slot: at each note, and every pass (so a knob or a punch-in reaches the notes that sound) */
+{
+    const scene_t *q = &cur.sc[sc];
+    uint32_t inst = q->inst % NINST, m = (pi_voice == 2u || pi_voice == sc) ? pi_mask : 0u;
+    uint32_t ea = env_atk(inst, q->env[0]), ed = env_dec(inst, q->env[1]), er = env_rel(inst, q->env[3]);
+    uint8_t tim = q->timbre;
+    if (m & 0x1000u) er = er > REL_MAX >> 3 ? REL_MAX : er << 3;                     /* LONG: the release eight times longer */
+    if (m & 0x2000u) { er >>= 3; if (er < 8u) er = 8u; }                              /* SHORT: an eighth of it */
+    if (m & 0x4000u) ea = ea > ATK_MAX >> 4 ? ATK_MAX : ea << 4;                     /* SLOW: a swell, sixteen times the attack (new notes) */
+    if ((int32_t)(kill_until - fm1_ms) > 0) er = 8u;
+    if (m & 0x100u) tim = 0;                                                          /* CLOSE */
+    if (m & 0x200u) tim = 255;                                                        /* OPEN */
+    s->eatk = ea; s->edec = ed; s->erel = er; s->esus = (uint8_t)env_sus(inst, q->env[2]);
+    s->tim = tim;
+}
+
 static void weights(void)
 {
-    uint32_t ph = (uint32_t)cur.morph_pos * 4210752u;
+    uint32_t ph = (uint32_t)cur.morph_pos * 4210752u, sc, j, bpm = bpm_get(&cur);
     wb = (uint32_t)((sine(ph) * 100) >> 15);
     wa = (uint32_t)((cosine(ph) * 100) >> 15);
     if (wa > 100u) wa = 100u;
     if (wb > 100u) wb = 100u;
-    gain_a = (int32_t)((wa * ((uint32_t)cur.sc[0].level + 1u)) >> 8);
-    gain_b = (int32_t)((wb * ((uint32_t)cur.sc[1].level + 1u)) >> 8);
-    ds_a = cur.sc[0].dsend;
-    ds_b = cur.sc[1].dsend;
-    pan_la = fxs.pana > 127u ? (255 - (int32_t)fxs.pana) * 2 : 255;                 /* a pan: the far side falls away, the near side stays full */
-    pan_ra = fxs.pana < 128u ? (int32_t)fxs.pana * 2 : 255;
-    pan_lb = fxs.panb > 127u ? (255 - (int32_t)fxs.panb) * 2 : 255;
-    pan_rb = fxs.panb < 128u ? (int32_t)fxs.panb * 2 : 255;
-    pan_la = clampi(pan_la, 0, 255); pan_ra = clampi(pan_ra, 0, 255); pan_lb = clampi(pan_lb, 0, 255); pan_rb = clampi(pan_rb, 0, 255);
-    rv_a = cur.rv[0];
-    rv_b = cur.rv[1];
-    rv_g = 19660 + (int32_t)cur.rv[2] * 42;                 /* the size: the feedback gain, 0.60 .. 0.93 */
-    rv_k = 5000 + (int32_t)cur.rv[3] * 106;                 /* the tone: the damping low-pass, dark .. bright */
-    dly_fb = fxs.dfb;
-    dly_k = 3000 + (int32_t)fxs.dtone * 113;
+    for (sc = 0; sc < 2u; sc++) {                                                     /* each voice's own chain */
+        const scene_t *q = &cur.sc[sc];
+        uint32_t m = (pi_voice == 2u || pi_voice == sc) ? pi_mask : 0u, w = sc ? wb : wa;
+        int32_t lvl = q->level, ds = q->dsend, fb = q->dfb, dt = q->dtime, dtn = q->dtone, rs = q->rsend, rz = q->rsize, rt = q->rtone, pn = sc ? fxs.panb : fxs.pana;
+        if (m) {                                                                      /* the punch-ins: momentary, on the voice the FX page shows */
+            if (m & 0x1u) ds = 255;                                                   /* THROW: all of it into the delay */
+            if (m & 0x2u) { fb = 230; if (ds < 200) ds = 200; }                       /* REPEAT: the echoes hardly die */
+            if (m & 0x4u) dt = 0;                                                     /* 1/16 */
+            if (m & 0x8u) dt = 3;                                                     /* 1/4 */
+            if (m & 0x10u) rs = 255;                                                  /* BLOOM */
+            if (m & 0x20u) { if (rs < 220) rs = 220; rz = 255; }                      /* HALL */
+            if (m & 0x40u) { rt = 0; if (rs < 180) rs = 180; }                        /* DARK */
+            if (m & 0x80u) { rt = 255; if (rs < 180) rs = 180; }                      /* AIR */
+            if (m & 0x400u) lvl >>= 2;                                                /* DUCK */
+            if (m & 0x800u) lvl = 0;                                                  /* KILL */
+            if (m & 0x8000u) pn = 255 - pn;                                           /* FLIP: the pan to the other side */
+        }
+        if ((int32_t)(kill_until - fm1_ms) > 0) { fb = 0; rs = 0; rz = 0; }               /* PANIC */
+        gain_v[sc] = (int32_t)((w * ((uint32_t)lvl + 1u)) >> 8);
+        ds_v[sc] = ds;
+        dly_fb_v[sc] = fb > 230 ? 230 : fb;
+        dly_k_v[sc] = 3000 + dtn * 113;
+        dly_len_v[sc] = clampi((int32_t)(DT_K[dt & 3] / bpm), 1000, (int32_t)DLN - 8);
+        rv_s[sc] = rs;
+        rv_g[sc] = 19660 + rz * 42;                                                   /* the size: the feedback gain, 0.60 .. 0.93 */
+        rv_k[sc] = 5000 + rt * 106;                                                   /* the tone: the damping low-pass, dark .. bright */
+        pan_l[sc] = clampi(pn > 127 ? (255 - pn) * 2 : 255, 0, 255);                  /* a pan: the far side falls away, the near side stays full */
+        pan_r[sc] = clampi(pn < 128 ? pn * 2 : 255, 0, 255);
+        for (j = 0; j < 4u; j++) slot_env(sc, &sl[sc * 4u + j]);
+    }
 }
 
 static void voice_on(uint32_t sc, uint32_t note)
@@ -504,7 +605,7 @@ static void voice_on(uint32_t sc, uint32_t note)
     if (cur.sc[sc].inst == INST_MIDI || cur.sc[sc].inst >= NINST || note > 127u) return;
     s->inc = INC_C9[note % 12u] >> (10u - note / 12u);
     s->inst = cur.sc[sc].inst;
-    s->tim = cur.sc[sc].timbre;
+    slot_env(sc, s);
     s->lvl = (8000 * (int32_t)IGAIN[cur.sc[sc].inst]) >> 8;
     slot_note[idx] = note;
     s->gate = 1;
@@ -568,6 +669,7 @@ static uint8_t mute_mask;
 static int32_t pend_slot = -1;
 static uint8_t eff[6];                          /* the six parameters now: morphed between the scenes, plus the LFOs */
 static uint32_t lfo_ph[6], next_t, last_t, step_hit, clk_next;
+static int32_t lfo_out[6], lfo_held[6];         /* each LFO's value now (-32767 .. 32767; 0 when it is off), and what RANDOM holds */
 static int32_t auto_ph, auto_last = -1;       /* AUTO A-B: the position of the trip (0 = A .. 65535 = B), and the morph value it wrote last */
 static int8_t auto_dir = 1;
 static uint8_t auto_rest, auto_arming;       /* ONCE: it has arrived; armed (a new mode or PLAY): pick the way again */
@@ -576,11 +678,73 @@ static uint32_t lfo_rem;
 static uint32_t hit_ticks;                      /* when a note last sounded */
 static volatile uint32_t hit_n;                 /* how many notes have sounded: the globe flashes on each */
 
+/* ---- REC: a capture of one measure. Armed, it starts at the next measure; for each of the eight steps it keeps whether a note sounded, and which (the chord's
+ * root, before the octave and the transpose), and, with RECM on, where the parameters stood (the six, and the density). When the eight steps are in, the
+ * notes go to the SEQ pattern of both scenes (a step that did not sound gets level 0, one that did gets 255), the mode becomes SEQ, and the motion, if any,
+ * is played back by SEQ. The pattern as it was is kept so that a long press of REC can put it back. */
+static uint8_t rec_state, rec_cnt, rec_gate, rec_done, rec_note[8], rec_mot[8][7], mot_on;      /* rec_state: 0 idle, 1 armed, 2 recording */
+static struct { uint8_t fader[2][8], seq[2][8], mode, mot, ok; } rec_undo;
+static void rec_finish(void)
+{
+    uint32_t i, k;
+    memcpy(rec_undo.fader[0], cur.sc[0].fader, 8); memcpy(rec_undo.fader[1], cur.sc[1].fader, 8);
+    memcpy(rec_undo.seq[0], cur.sc[0].seq, 8); memcpy(rec_undo.seq[1], cur.sc[1].seq, 8);
+    rec_undo.mode = cur.mode; rec_undo.mot = mot_on; rec_undo.ok = 1;
+    for (i = 0; i < 8u; i++)
+        for (k = 0; k < 2u; k++) {
+            if ((rec_gate >> i) & 1u) { cur.sc[k].seq[i] = rec_note[i]; cur.sc[k].fader[i] = 255; }
+            else cur.sc[k].fader[i] = 0;
+        }
+    cur.mode = MODE_SEQ;
+    mot_on = fxs.recm ? 1u : 0u;
+    rec_state = 0;
+    rec_done = 1;
+}
+static void rec_restore(void)
+{
+    if (!rec_undo.ok) return;
+    memcpy(cur.sc[0].fader, rec_undo.fader[0], 8); memcpy(cur.sc[1].fader, rec_undo.fader[1], 8);
+    memcpy(cur.sc[0].seq, rec_undo.seq[0], 8); memcpy(cur.sc[1].seq, rec_undo.seq[1], 8);
+    cur.mode = rec_undo.mode; mot_on = rec_undo.mot; rec_undo.ok = 0;
+}
+static uint8_t effv(uint32_t k, uint32_t step)  /* a parameter now: what Freeze holds, or SEQ's recorded motion at that step, or the live value */
+{
+    if (frozen) return frz_e[k];
+    if (mot_on && cur.mode == MODE_SEQ) return rec_mot[step & 7u][k];
+    return eff[k];
+}
+
+/* ---- CHAIN (SELECT menus): up to eight steps, each a preset slot and a number of measures; while it is on and the sequencer plays, a new measure counts
+ * and, when a step's bars are up, the next step's preset is recalled. Each step is a byte: bit 7 used, bits 4..6 the bars (0..4: 1, 2, 4, 8, 16), bits 0..3 the slot. */
+static uint8_t chain[CHAIN_N], chain_on, chain_pos = 255, chain_left;
+static void chain_measure(void);                /* (section 5) */
+static void bank_open(void);
+static void hud_num(const char *name, int32_t v, int sign);
+
 static uint32_t step_ticks(void)                /* one step, in 24 MHz ticks (60e6 us / (bpm * 2^div) * 24) */
 {
     uint32_t bpm = bpm_get(&cur);
     return (60000000u / (bpm << cur.div)) * 24u;
 }
+
+static uint32_t lfo_period(uint32_t beat_us, uint32_t r)   /* us a cycle */
+{
+    return r <= 4u ? beat_us >> (r - 1u) : beat_us << (r - 4u);
+}
+static int32_t lfo_wave(uint32_t sh, uint32_t ph, int32_t held)    /* the shape at a phase (a full cycle over 2^32): -32767 .. 32767 */
+{
+    int32_t t = (int32_t)(ph >> 16), v;
+    switch (sh) {
+    case 0: return sine(ph);
+    case 1: v = t < 16384 ? 2 * t : t < 49152 ? 2 * (32768 - t) : 2 * (t - 65536); break;     /* triangle: up through zero at the start */
+    case 2: v = t - 32768; break;                                                              /* saw: rising */
+    case 3: v = 32767 - t; break;                                                              /* ramp: falling */
+    case 4: v = t < 32768 ? 32767 : -32767; break;
+    default: return held;
+    }
+    return clampi(v, -32767, 32767);
+}
+static void lfo_reset(void) { uint32_t p; for (p = 0; p < 6u; p++) { lfo_ph[p] = 0; lfo_held[p] = 0; } }   /* the LFOs start from their phase each time it plays */
 
 static void update_eff(uint32_t dt)             /* dt: ticks since the last call */
 {
@@ -590,11 +754,15 @@ static void update_eff(uint32_t dt)             /* dt: ticks since the last call
     lfo_rem = dt - us * 24u;
     for (p = 0; p < 6u; p++) {
         int32_t base = (int32_t)(((uint32_t)cur.sc[0].p[p] * (255u - mp) + (uint32_t)cur.sc[1].p[p] * mp + 127u) / 255u);
-        uint32_t r = cur.lfo_rate[p];
-        if (r && cur.lfo_depth[p]) {
-            uint32_t period = beat_us >> (r - 1u);          /* us per cycle: 1, 1/2, 1/4, 1/8 beat */
+        uint32_t r = cur.lfo_rate[p], sh = cur.lfo_sp[p] & 7u;
+        if (sh > 5u) sh = 0;
+        lfo_out[p] = 0;
+        if (r && r <= 8u) {
+            uint32_t period = lfo_period(beat_us, r), old = lfo_ph[p];
             lfo_ph[p] += (4294967295u / (period ? period : 1u)) * us;
-            base += (((sine(lfo_ph[p]) * (int32_t)cur.lfo_depth[p]) >> 15) * 127) >> 8;
+            if (sh == 5u && lfo_ph[p] < old) lfo_held[p] = (int32_t)(rnd32() >> 16) - 32768;      /* RANDOM: a new value each cycle */
+            lfo_out[p] = lfo_wave(sh, lfo_ph[p] + ((uint32_t)(cur.lfo_sp[p] >> 3) << 27), lfo_held[p]);
+            if (cur.lfo_depth[p]) base += (((lfo_out[p] * (int32_t)cur.lfo_depth[p]) >> 15) * 127) >> 8;
         }
         eff[p] = (uint8_t)clampi(base, p == 2u ? 26 : 0, 255);
     }
@@ -651,9 +819,9 @@ static void chord_build(uint32_t raw, uint32_t n, uint8_t *pl)       /* the chor
     }
 }
 
-static void do_step(void)
+static void do_step_inner(void)
 {
-    int32_t e = (int32_t)(frozen ? frz_e[3] : eff[3]) - 127;
+    int32_t e = (int32_t)effv(3, cstep) - 127;
     uint32_t ls = cstep, p, mp = cur.morph_pos, rest, legato, harm, chaos, gate_t, raw, k, n, i;
     int32_t shift = 0;
     const uint8_t *pool;
@@ -664,7 +832,13 @@ static void do_step(void)
     else if (e < -13 && e >= -64) ls = (ls + 7u) & 7u;
     else ls = rnd8() < 51u ? (ls + 2u) & 7u : (ls + 1u) & 7u;
     cstep = (uint8_t)ls;
+    if (rec_state == 1u && ls == 0u) { rec_state = 2; rec_cnt = 0; rec_gate = 0; }  /* REC was armed: the capture starts with this measure */
+    if (rec_state == 2u) {
+        rec_cnt++;
+        if (fxs.recm) { memcpy(rec_mot[ls], eff, 6); rec_mot[ls][6] = cur.density; }
+    }
     if (ls == 0u && auto_roll && !frozen) roll();                                   /* auto re-roll: each measure */
+    if (ls == 0u && chain_on) { chain_measure(); }                                  /* the chain counts the measure */
     if (ls == 0u && pend_slot >= 0) {                                               /* a recall waits for the end of the measure */
         recall_apply(pend_slot);
         pend_slot = -1;
@@ -674,16 +848,17 @@ static void do_step(void)
     else {
         uint32_t a = ((uint32_t)cur.sc[0].fader[ls] * (255u - mp) + (uint32_t)cur.sc[1].fader[ls] * mp + 127u) / 255u;
         uint32_t b = ((uint32_t)cur.sc[0].fader[(ls + 1u) & 7u] * (255u - mp) + (uint32_t)cur.sc[1].fader[(ls + 1u) & 7u] * mp + 127u) / 255u;
-        uint32_t m = eff[0];
+        uint32_t m = effv(0, ls);
         p = (a * (255u - m) + b * m + 127u) / 255u;
     }
-    if (cur.density < 128u) p = p * cur.density / 128u;
-    else if (cur.density > 128u) p = p + ((255u - p) * (cur.density - 128u)) / 127u;
+    { uint32_t dn = (mot_on && cur.mode == MODE_SEQ && !frozen) ? rec_mot[ls][6] : cur.density;
+      if (dn < 128u) p = p * dn / 128u;
+      else if (dn > 128u) p = p + ((255u - p) * (dn - 128u)) / 127u; }
     if (p > 255u) p = 255u;
-    rest = frozen ? frz_e[1] : eff[1];
-    legato = frozen ? frz_e[2] : eff[2];
-    harm = frozen ? frz_e[4] : eff[4];
-    chaos = frozen ? frz_e[5] : eff[5];
+    rest = effv(1, ls);
+    legato = effv(2, ls);
+    harm = effv(4, ls);
+    chaos = effv(5, ls);
     if (legato >= 204u) rest = rest * (255u - legato) / 51u;
     gate_t = (step_ticks() / 100u) * (10u + legato * 85u / 255u);
     if ((mute_mask >> ls) & 1u) return;
@@ -706,6 +881,12 @@ static void do_step(void)
     hit_n++;                                    /* (the globe flashes on it) */
     step_hit = ls;
     trail[ls] = 255;
+    if (rec_state == 2u) { rec_note[ls] = (uint8_t)raw; rec_gate |= (uint8_t)(1u << ls); }     /* REC keeps the note */
+}
+static void do_step(void)
+{
+    do_step_inner();
+    if (rec_state == 2u && rec_cnt >= 8u) rec_finish();                              /* eight steps are in */
 }
 
 /* AUTO A-B: the crossfader moves by itself, locked to the step clock: one trip from A to B takes 2^abars bars (4 beats each, whatever
@@ -781,6 +962,7 @@ static void transport(int on)
         last_t = next_t;
         clk_next = next_t;
         auto_arm();                                         /* (ONCE makes a new trip each time it plays) */
+        lfo_reset();
         if (xc_follow) { xc_run = 1; xc_pend = 0; if (!xc_cont) { xc_n = 0; xc_stepno = 0; } }   /* following: the steps come with the next ticks */
         if (fxs.sync && !xc_follow) midi_send(0xFAu, 0, 0);               /* MIDI Start */
     } else if (!on && running) {
@@ -876,19 +1058,43 @@ static void key_note(uint32_t note, int down)   /* a key (or MIDI in) goes down 
 }
 
 /* ================================================================== 5. storage */
-#define PRE_MAGIC 0x32564E50u                   /* "PNV2" */
+#define PRE_MAGIC 0x33564E50u                   /* "PNV3" */
+#define PRE_MAGIC2 0x32564E50u                  /* "PNV2": v1.0 .. v1.6, 16 presets of 80 B after the 8-byte header */
+#define PRE16_BYTES (16u * sizeof(preset16_t))
 typedef struct { uint32_t magic, crc; preset_t p[16]; } prebank_t;
 static prebank_t bank;
 static uint8_t bank_ok;
+
+static void bank_conv16(void)                   /* bank holds a PNV2 bank: rewrite it in the new layout, last slot first (a new slot is longer, so it never lands on one not yet read) */
+{
+    const uint8_t *raw = (const uint8_t *)&bank;
+    int32_t i;
+    for (i = 15; i >= 0; i--) {
+        preset16_t o;
+        preset_t n;
+        memcpy(&o, raw + 8u + (uint32_t)i * sizeof o, sizeof o);
+        preset_from16(&n, &o);
+        memcpy(&bank.p[i], &n, sizeof n);
+    }
+    bank.magic = PRE_MAGIC;
+}
 
 static int bank_load(void)
 {
 #ifdef DINGHY_HOST
     if (!host_pre_ok) return -1;
     memcpy(&bank, host_pre, sizeof bank);
+    if (bank.magic == PRE_MAGIC2) { bank_conv16(); return 0; }
     return bank.magic == PRE_MAGIC ? 0 : -1;
 #else
-    if (!flash_ok || st_read(PRESETS_AT, &bank, sizeof bank) || bank.magic != PRE_MAGIC ||
+    if (!flash_ok || st_read(PRESETS_AT, &bank, 8u)) return -1;
+    if (bank.magic == PRE_MAGIC2) {             /* the old layout: read it, check it, convert it */
+        uint32_t crc = bank.crc;
+        if (st_read(PRESETS_AT, &bank, 8u + PRE16_BYTES) || crc32((const uint8_t *)&bank + 8u, PRE16_BYTES) != crc) return -1;
+        bank_conv16();
+        return 0;
+    }
+    if (bank.magic != PRE_MAGIC || st_read(PRESETS_AT, &bank, sizeof bank) || bank.magic != PRE_MAGIC ||
         crc32((const uint8_t *)bank.p, sizeof bank.p) != bank.crc)
         return -1;
     return 0;
@@ -952,16 +1158,34 @@ static void recall_apply(int32_t slot)          /* the engine calls it at the en
 {
     if (slot < 0 || slot > 15 || !bank.p[slot].used) return;
     cur = bank.p[slot];
-    rv_legacy(&cur);
     glob.slot = (uint8_t)slot;
+    mot_on = 0;                                 /* (a capture's motion belongs to the pattern it came with) */
     flash(KEY_LED(WHITE_KEY[slot]), 2);
     flash(BTN_SAVE, 2);
+}
+
+static void chain_measure(void)                 /* a new measure while the chain is on: count it; when the step's bars are up, recall the next step's preset */
+{
+    uint32_t i, n, found = 0, code, slot;
+    if (chain_left) chain_left--;
+    if (chain_left) return;
+    n = chain_pos == 255u ? 0u : ((uint32_t)chain_pos + 1u) % CHAIN_N;
+    for (i = 0; i < CHAIN_N; i++, n = (n + 1u) % CHAIN_N)
+        if (chain[n] & 0x80u) { found = 1; break; }
+    if (!found) { chain_on = 0; return; }                                       /* nothing in it */
+    chain_pos = (uint8_t)n;
+    code = (chain[n] >> 4) & 7u;
+    chain_left = (uint8_t)(1u << (code > 4u ? 4u : code));
+    slot = chain[n] & 15u;
+    bank_open();
+    if (bank.p[slot].used & 1u) { pend_slot = -1; recall_apply((int32_t)slot); }
+    hud_num("CHAIN SLOT", (int32_t)slot + 1, 0);
 }
 
 /* ================================================================== 6. the screen */
 /* a theme: the ramp of the chrome (dark to bright), the two scenes' colours, a colour for each group of pages (HOME, FX,
  * LFO, GLO), and the towers (low to high). The first three keep their places in the saved settings. */
-enum { G_HOME, G_FX, G_LFO, G_GLO };                  /* the groups of pages: each has a colour in the theme */
+enum { G_HOME, G_FX, G_LFO, G_GLO, G_ENV };                  /* the groups of pages: each has a colour in the theme */
 #define NTHEME 6u
 typedef struct { const char *name; uint16_t c[5]; uint16_t a, b, g[4], t0, t1; } theme_t;
 static const theme_t THEME[NTHEME] = {
@@ -982,7 +1206,7 @@ static const theme_t THEME[NTHEME] = {
  * 2 WILD (RICH, and each tower, each ring of the globe and each flash in its own colour) */
 #define C_A (fxs.cmode == 0u ? pal[3] : TH.a)
 #define C_B (fxs.cmode == 0u ? pal[4] : TH.b)
-#define GCOL(grp) (fxs.cmode == 0u ? pal[3] : TH.g[(grp) & 3u])
+#define GCOL(grp) (fxs.cmode == 0u ? pal[3] : TH.g[(grp) == G_ENV ? G_FX : (grp) & 3u])
 
 static void theme_set(uint32_t t)
 {
@@ -1106,7 +1330,7 @@ static void draw_globe(int32_t cx, int32_t cy)
     int32_t px[GN], py[GN], pz[GN];
     uint16_t rc[6];
     for (r = 0; r < 6u; r++) if (cur.lfo_rate[r] && cur.lfo_depth[r]) { lfo_on = 1; dsum += cur.lfo_depth[r]; }
-    if (lfo_on) radius += ((sine(lfo_ph[0] ? lfo_ph[0] : lfo_ph[3]) >> 12) * (int32_t)(dsum > 255u ? 255u : dsum)) >> 11;
+    if (lfo_on) radius += (((lfo_out[0] ? lfo_out[0] : lfo_out[3]) >> 12) * (int32_t)(dsum > 255u ? 255u : dsum)) >> 11;
     for (r = 0; r < 6u; r++) rc[r] = fxs.cmode == 0u ? pal[3] : hue6(r);
     for (i = 0; i < GN; i++) {                                                          /* rotate, then a little perspective */
         int32_t x = gx[i], y = gy[i], z = gz[i], x1, z1, y2, z2, den, sc;
@@ -1159,7 +1383,7 @@ static void draw_globe(int32_t cx, int32_t cy)
     for (i = 0; i < GN; i++) {                                                          /* the nodes: bright when their LFO is high, dim behind */
         uint32_t ringi = i == 0u || i == 61u ? 0u : 1u + (i - 1u) / 12u, al = 90u;
         if (cur.lfo_rate[ringi] && cur.lfo_depth[ringi] > 4u) {
-            int32_t m = (sine(lfo_ph[ringi]) * (int32_t)cur.lfo_depth[ringi]) >> 8;     /* -32640 .. 32640 */
+            int32_t m = (lfo_out[ringi] * (int32_t)cur.lfo_depth[ringi]) >> 8;     /* -32640 .. 32640 */
             al = 90u + (uint32_t)((m + 32768) >> 8) * 153u / 256u;
         }
         if (pz[i] < -6000) al >>= 1;
@@ -1211,6 +1435,8 @@ static void draw_head(void)
     if (latch) p = p_str(p, " LATCH");
     if (cur.poly) p = p_str(p, " POLY");
     if (frozen) p = p_str(p, " FRZ");
+    if (rec_state) p = p_str(p, rec_state == 1u ? " ARM" : " REC");
+    if (chain_on) p = p_str(p, " CHN");
     if (auto_roll) p = p_str(p, " RND");
     *p = 0;
     draw_text_box(8, 2, 224, &FONT_S, s, frozen ? pal[4] : edit_sc ? C_B : C_A, 0);
@@ -1317,11 +1543,11 @@ static void draw_foot(void)
 
 /* ---- the cells: what one knob controls on a page, how it reads, how it turns */
 enum { K_NONE, K_DENS, K_SWING, K_P, K_AB, K_INST, K_TIMB, K_DLY, K_LVL, K_LSPD, K_LDEP, K_BPM, K_STEP, K_TRANS,
-       K_THEME, K_ROOT, K_SCALE, K_CHA, K_CHB, K_RVA, K_RVB, K_RVS, K_RVT, K_DTM, K_DFB, K_DTN, K_SYNC, K_CHRD, K_VOIC, K_AMODE, K_ABARS, K_ASHP, K_CSRC, K_CMODE, K_METER, K_CCIN, K_PCIN, K_PANA, K_PANB };
+       K_THEME, K_ROOT, K_SCALE, K_CHA, K_CHB, K_RSND, K_RSIZ, K_RTON, K_DTM, K_DFB, K_DTN, K_SYNC, K_CHRD, K_VOIC, K_AMODE, K_ABARS, K_ASHP, K_CSRC,
+       K_CMODE, K_METER, K_CCIN, K_PCIN, K_PANA, K_PANB, K_LSHP, K_LPHS, K_ENVA, K_ENVD, K_ENVS, K_ENVR, K_POLY, K_WAVE };
 typedef struct { uint8_t kind, arg; } cell_t;
 
 static const char *const PSHORT[6] = {"MORPH", "REST", "LEGATO", "ENTROP", "HARMNY", "CHAOS"};
-static const char *const LSHORT[6] = {"MOR", "RES", "LEG", "ENT", "HAR", "CHA"};
 static const char *const INST_SHORT[28] = {"MIDI", "ANALOG", "FM", "SUPSAW", "PULSE", "EPIANO", "BELL", "PLUCK", "ORGAN", "BASS", "PAD", "BRASS",
                                            "PRO-5", "MOOG", "JUNO", "SYNC", "VIRUS", "SH-101", "ACID", "STRING", "CS-80", "DXBASS", "CLAV", "VIBES",
                                            "PWM", "BREATH", "HOOVER", "WOBBLE"};
@@ -1344,7 +1570,6 @@ static void cell_text(cell_t c, char *name, char *val, int32_t *bar, uint32_t *s
 {
     scene_t *s = &cur.sc[edit_sc], *v = &cur.sc[c.arg & 1u];
     uint32_t a6 = c.arg % 6u;
-    char *p;
     *bar = -1; *scn = 0; name[0] = 0; val[0] = 0;
     switch (c.kind) {
     case K_DENS: cpy(name, "DENS"); *p_p100(val, cur.density) = 0; *bar = cur.density; break;
@@ -1361,13 +1586,16 @@ static void cell_text(cell_t c, char *name, char *val, int32_t *bar, uint32_t *s
     case K_TIMB: cpy(name, "TIMBRE"); *p_p100(val, v->timbre) = 0; *bar = v->timbre; *scn = (c.arg & 1u) + 1u; break;
     case K_DLY: cpy(name, "DELAY"); *p_p100(val, v->dsend) = 0; *bar = v->dsend; *scn = (c.arg & 1u) + 1u; break;
     case K_LVL: cpy(name, "LEVEL"); *p_p100(val, v->level) = 0; *bar = v->level; *scn = (c.arg & 1u) + 1u; break;
-    case K_LSPD:
-        p = p_str(name, LSHORT[a6]); cpy(p, " SP");
-        cpy(val, LFO_RATE[cur.lfo_rate[a6] % 5u]);
-        *bar = (int32_t)cur.lfo_rate[a6] * 255 / 4;
+    case K_LSPD: {
+        uint32_t pos = 0, i;
+        cpy(name, "RATE");
+        cpy(val, LFO_RATE[cur.lfo_rate[a6] % 9u]);
+        for (i = 0; i < 9u; i++) if (LFO_POS[i] == cur.lfo_rate[a6]) pos = i;
+        *bar = (int32_t)pos * 255 / 8;
         break;
+    }
     case K_LDEP:
-        p = p_str(name, LSHORT[a6]); cpy(p, " DP");
+        cpy(name, "DEPTH");
         *p_p100(val, cur.lfo_depth[a6]) = 0;
         *bar = cur.lfo_depth[a6];
         break;
@@ -1379,13 +1607,28 @@ static void cell_text(cell_t c, char *name, char *val, int32_t *bar, uint32_t *s
     case K_SCALE: cpy(name, "SCALE"); cpy(val, SCALE_SHORT[cur.scale % 10u]); break;
     case K_CHA: cpy(name, "CH A"); *p_num(val, (uint32_t)glob.ch[0] + 1u) = 0; break;
     case K_CHB: cpy(name, "CH B"); *p_num(val, (uint32_t)glob.ch[1] + 1u) = 0; break;
-    case K_RVA: cpy(name, "REV A"); *p_p100(val, cur.rv[0]) = 0; *bar = cur.rv[0]; *scn = 1; break;
-    case K_RVB: cpy(name, "REV B"); *p_p100(val, cur.rv[1]) = 0; *bar = cur.rv[1]; *scn = 2; break;
-    case K_RVS: cpy(name, "SIZE"); *p_p100(val, cur.rv[2]) = 0; *bar = cur.rv[2]; break;
-    case K_RVT: cpy(name, "BRIGHT"); *p_p100(val, cur.rv[3]) = 0; *bar = cur.rv[3]; break;
-    case K_DTM: cpy(name, "TIME"); cpy(val, DTM_NAME[fxs.dtime & 3u]); break;
-    case K_DFB: cpy(name, "FDBK"); *p_p100(val, fxs.dfb) = 0; *bar = fxs.dfb; break;
-    case K_DTN: cpy(name, "TONE"); *p_p100(val, fxs.dtone) = 0; *bar = fxs.dtone; break;
+    case K_RSND: cpy(name, "SEND"); *p_p100(val, v->rsend) = 0; *bar = v->rsend; *scn = (c.arg & 1u) + 1u; break;
+    case K_RSIZ: cpy(name, "SIZE"); *p_p100(val, v->rsize) = 0; *bar = v->rsize; *scn = (c.arg & 1u) + 1u; break;
+    case K_RTON: cpy(name, "BRIGHT"); *p_p100(val, v->rtone) = 0; *bar = v->rtone; *scn = (c.arg & 1u) + 1u; break;
+    case K_DTM: cpy(name, "TIME"); cpy(val, DTM_NAME[v->dtime & 3u]); *scn = (c.arg & 1u) + 1u; break;
+    case K_DFB: cpy(name, "FDBK"); *p_p100(val, v->dfb) = 0; *bar = v->dfb; *scn = (c.arg & 1u) + 1u; break;
+    case K_DTN: cpy(name, "TONE"); *p_p100(val, v->dtone) = 0; *bar = v->dtone; *scn = (c.arg & 1u) + 1u; break;
+    case K_LSHP: cpy(name, "SHAPE"); cpy(val, LFO_SHAPE[(cur.lfo_sp[a6] & 7u) % 6u]); break;
+    case K_LPHS: cpy(name, "PHASE"); *p_num(val, ((uint32_t)(cur.lfo_sp[a6] >> 3) * 100u) / 32u) = 0; *bar = (int32_t)(cur.lfo_sp[a6] >> 3) * 255 / 31; break;
+    case K_ENVA: case K_ENVD: case K_ENVR: {
+        uint32_t i = v->inst, n = c.kind == K_ENVA ? env_atk(i, v->env[0]) : c.kind == K_ENVD ? env_dec(i, v->env[1]) : env_rel(i, v->env[3]);
+        uint32_t ms = n * 10u / 441u;
+        char *q = val;
+        cpy(name, c.kind == K_ENVA ? "ATTACK" : c.kind == K_ENVD ? "DECAY" : "RELEASE");
+        if (ms < 1000u) { q = p_num(q, ms); q = p_str(q, "MS"); }
+        else { q = p_num(q, ms / 1000u); *q++ = '.'; q = p_num(q, (ms % 1000u) / 100u); *q++ = 'S'; }
+        *q = 0;
+        *bar = v->env[c.kind == K_ENVA ? 0 : c.kind == K_ENVD ? 1 : 3];
+        *scn = (c.arg & 1u) + 1u;
+        break;
+    }
+    case K_ENVS: cpy(name, "SUS"); *p_p100(val, env_sus(v->inst, v->env[2])) = 0; *bar = v->env[2]; *scn = (c.arg & 1u) + 1u; break;
+    case K_POLY: cpy(name, "POLY"); cpy(val, OFFON_NAME[cur.poly & 1u]); break;
     case K_SYNC: cpy(name, "SYNC"); cpy(val, SYNC_NAME[fxs.sync % 3u]); break;
     case K_CHRD: cpy(name, "CHORD"); cpy(val, CHORD_NAME[fxs.chord & 3u]); break;
     case K_VOIC: cpy(name, "SPREAD"); cpy(val, VOIC_NAME[fxs.voic % 3u]); break;
@@ -1423,11 +1666,21 @@ static void cell_adj(cell_t c, int32_t d)       /* d: signed clicks, larger when
     case K_SWING: adj(&cur.swing, d, 3); break;
     case K_P: adj(&s->p[c.arg % 6u], d, 3); break;
     case K_AB: adj(&cur.morph_pos, d, 3); break;
-    case K_INST: v->inst = (uint8_t)clampi((int32_t)v->inst + sg, 0, (int32_t)NINST - 1); break;
+    case K_INST: {
+        uint8_t was = v->inst;
+        v->inst = (uint8_t)clampi((int32_t)v->inst + sg, 0, (int32_t)NINST - 1);
+        if (v->inst != was) v->env[0] = v->env[1] = v->env[2] = v->env[3] = 128;      /* a new instrument starts from its own envelope */
+        break;
+    }
     case K_TIMB: adj(&v->timbre, d, 3); break;
     case K_DLY: adj(&v->dsend, d, 3); break;
     case K_LVL: adj(&v->level, d, 3); break;
-    case K_LSPD: cur.lfo_rate[c.arg % 6u] = (uint8_t)clampi((int32_t)cur.lfo_rate[c.arg % 6u] + sg, 0, 4); break;
+    case K_LSPD: {
+        int32_t pos = 0, i;
+        for (i = 0; i < 9; i++) if (LFO_POS[i] == cur.lfo_rate[c.arg % 6u]) pos = i;
+        cur.lfo_rate[c.arg % 6u] = LFO_POS[clampi(pos + sg, 0, 8)];
+        break;
+    }
     case K_LDEP: adj(&cur.lfo_depth[c.arg % 6u], d, 3); break;
     case K_BPM: bpm_set(&cur, (int32_t)bpm_get(&cur) + d); break;
     case K_STEP: cur.div = (uint8_t)clampi((int32_t)cur.div + sg, 0, 3); break;
@@ -1437,13 +1690,19 @@ static void cell_adj(cell_t c, int32_t d)       /* d: signed clicks, larger when
     case K_SCALE: cur.scale = (uint8_t)clampi((int32_t)cur.scale + sg, 0, 9); break;
     case K_CHA: glob.ch[0] = (uint8_t)clampi((int32_t)glob.ch[0] + sg, 0, 15); break;
     case K_CHB: glob.ch[1] = (uint8_t)clampi((int32_t)glob.ch[1] + sg, 0, 15); break;
-    case K_RVA: adj(&cur.rv[0], d, 3); break;
-    case K_RVB: adj(&cur.rv[1], d, 3); break;
-    case K_RVS: adj(&cur.rv[2], d, 3); break;
-    case K_RVT: adj(&cur.rv[3], d, 3); break;
-    case K_DTM: fxs.dtime = (uint8_t)clampi((int32_t)fxs.dtime + sg, 0, 3); break;
-    case K_DFB: fxs.dfb = (uint8_t)clampi((int32_t)fxs.dfb + d * 3, 0, 230); break;
-    case K_DTN: adj(&fxs.dtone, d, 3); break;
+    case K_RSND: adj(&v->rsend, d, 3); break;
+    case K_RSIZ: adj(&v->rsize, d, 3); break;
+    case K_RTON: adj(&v->rtone, d, 3); break;
+    case K_DTM: v->dtime = (uint8_t)clampi((int32_t)v->dtime + sg, 0, 3); break;
+    case K_DFB: v->dfb = (uint8_t)clampi((int32_t)v->dfb + d * 3, 0, 230); break;
+    case K_DTN: adj(&v->dtone, d, 3); break;
+    case K_LSHP: { uint32_t sh = (cur.lfo_sp[c.arg % 6u] & 7u) % 6u; sh = (uint32_t)clampi((int32_t)sh + sg, 0, 5); cur.lfo_sp[c.arg % 6u] = (uint8_t)((cur.lfo_sp[c.arg % 6u] & ~7u) | sh); break; }
+    case K_LPHS: { uint8_t *q = &cur.lfo_sp[c.arg % 6u]; *q = (uint8_t)((*q & 7u) | ((uint32_t)clampi((int32_t)(*q >> 3) + sg, 0, 31) << 3)); break; }
+    case K_ENVA: adj(&v->env[0], d, 3); break;
+    case K_ENVD: adj(&v->env[1], d, 3); break;
+    case K_ENVS: adj(&v->env[2], d, 3); break;
+    case K_ENVR: adj(&v->env[3], d, 3); break;
+    case K_POLY: cur.poly = sg > 0 ? 1u : 0u; break;
     case K_SYNC: fxs.sync = (uint8_t)clampi((int32_t)fxs.sync + sg, 0, 2); break;
     case K_CHRD: fxs.chord = (uint8_t)clampi((int32_t)fxs.chord + sg, 0, 3); break;
     case K_VOIC: fxs.voic = (uint8_t)clampi((int32_t)fxs.voic + sg, 0, 2); break;
@@ -1484,51 +1743,89 @@ static int32_t knob_delta(uint32_t id, int32_t e)   /* a fast turn takes bigger 
 }
 
 /* ---- pages: two halves of four cells; the knobs 1-4 turn the cells of the lit half; the buttons step through */
-static const char *const GROUP_NAME[4] = {"HOME", "FX", "LFO", "GLO"};
-typedef struct { uint8_t group, pos; const char *tab; cell_t c[4]; } half_t;
+static const char *const GROUP_NAME[5] = {"HOME", "FX", "LFO", "GLO", "ENV"};
+typedef struct { uint8_t group, pos, flags; const char *tab; cell_t c[4]; } half_t;       /* flags 1: only shown (the knobs do not go to it, SELECT skips it) */
+#define LF(i, nm) {G_LFO, 0, 1, nm, {{K_WAVE, i}, {K_NONE, 0}, {K_NONE, 0}, {K_NONE, 0}}}, \
+                  {G_LFO, 1, 0, nm, {{K_LSHP, i}, {K_LSPD, i}, {K_LDEP, i}, {K_LPHS, i}}}
 static const half_t HALF[] = {
-    {G_HOME, 0, "GENERATE", {{K_P, 3}, {K_P, 4}, {K_P, 5}, {K_P, 0}}},
-    {G_HOME, 1, "RHYTHM", {{K_P, 1}, {K_DENS, 0}, {K_SWING, 0}, {K_P, 2}}},
-    {G_FX, 0, "VOICE A", {{K_INST, 0}, {K_TIMB, 0}, {K_DLY, 0}, {K_LVL, 0}}},
-    {G_FX, 1, "VOICE B", {{K_INST, 1}, {K_TIMB, 1}, {K_DLY, 1}, {K_LVL, 1}}},
-    {G_FX, 0, "REVERB", {{K_RVA, 0}, {K_RVB, 0}, {K_RVS, 0}, {K_RVT, 0}}},
-    {G_FX, 1, "DELAY", {{K_DTM, 0}, {K_DFB, 0}, {K_DTN, 0}, {K_NONE, 0}}},
-    {G_FX, 0, "MIX", {{K_PANA, 0}, {K_PANB, 0}, {K_NONE, 0}, {K_NONE, 0}}},
-    {G_LFO, 0, "MORPH REST", {{K_LSPD, 0}, {K_LDEP, 0}, {K_LSPD, 1}, {K_LDEP, 1}}},
-    {G_LFO, 1, "LEGATO ENTROPY", {{K_LSPD, 2}, {K_LDEP, 2}, {K_LSPD, 3}, {K_LDEP, 3}}},
-    {G_LFO, 0, "HARMONY CHAOS", {{K_LSPD, 4}, {K_LDEP, 4}, {K_LSPD, 5}, {K_LDEP, 5}}},
-    {G_GLO, 0, "TEMPO KEY", {{K_BPM, 0}, {K_STEP, 0}, {K_TRANS, 0}, {K_THEME, 0}}},
-    {G_GLO, 1, "SCALE MIDI", {{K_ROOT, 0}, {K_SCALE, 0}, {K_CHA, 0}, {K_CHB, 0}}},
-    {G_GLO, 0, "CHORD SYNC", {{K_CHRD, 0}, {K_VOIC, 0}, {K_SYNC, 0}, {K_CSRC, 0}}},
-    {G_GLO, 0, "AUTO A-B", {{K_AMODE, 0}, {K_ABARS, 0}, {K_ASHP, 0}, {K_NONE, 0}}},
-    {G_GLO, 0, "MIDI IN LOOK", {{K_CCIN, 0}, {K_PCIN, 0}, {K_CMODE, 0}, {K_METER, 0}}},
+    {G_HOME, 0, 0, "GENERATE", {{K_P, 3}, {K_P, 4}, {K_P, 5}, {K_P, 0}}},
+    {G_HOME, 1, 0, "RHYTHM", {{K_P, 1}, {K_DENS, 0}, {K_SWING, 0}, {K_P, 2}}},
+    {G_FX, 0, 0, "A VOICE", {{K_INST, 0}, {K_TIMB, 0}, {K_LVL, 0}, {K_NONE, 0}}},
+    {G_FX, 1, 0, "A DELAY", {{K_DLY, 0}, {K_DTM, 0}, {K_DFB, 0}, {K_DTN, 0}}},
+    {G_FX, 0, 0, "A REVERB", {{K_RSND, 0}, {K_RSIZ, 0}, {K_RTON, 0}, {K_NONE, 0}}},
+    {G_FX, 0, 0, "B VOICE", {{K_INST, 1}, {K_TIMB, 1}, {K_LVL, 1}, {K_NONE, 0}}},
+    {G_FX, 1, 0, "B DELAY", {{K_DLY, 1}, {K_DTM, 1}, {K_DFB, 1}, {K_DTN, 1}}},
+    {G_FX, 0, 0, "B REVERB", {{K_RSND, 1}, {K_RSIZ, 1}, {K_RTON, 1}, {K_NONE, 0}}},
+    {G_FX, 1, 0, "MIX", {{K_PANA, 0}, {K_PANB, 0}, {K_NONE, 0}, {K_NONE, 0}}},
+    {G_ENV, 0, 0, "A ENVELOPE", {{K_ENVA, 0}, {K_ENVD, 0}, {K_ENVS, 0}, {K_ENVR, 0}}},
+    {G_ENV, 1, 0, "B ENVELOPE", {{K_ENVA, 1}, {K_ENVD, 1}, {K_ENVS, 1}, {K_ENVR, 1}}},
+    LF(0, "MORPH"), LF(1, "REST"), LF(2, "LEGATO"), LF(3, "ENTROPY"), LF(4, "HARMONY"), LF(5, "CHAOS"),
+    {G_GLO, 0, 0, "TEMPO KEY", {{K_BPM, 0}, {K_STEP, 0}, {K_TRANS, 0}, {K_THEME, 0}}},
+    {G_GLO, 1, 0, "SCALE MIDI", {{K_ROOT, 0}, {K_SCALE, 0}, {K_CHA, 0}, {K_CHB, 0}}},
+    {G_GLO, 0, 0, "CHORDS", {{K_POLY, 0}, {K_CHRD, 0}, {K_VOIC, 0}, {K_NONE, 0}}},
+    {G_GLO, 1, 0, "SYNC", {{K_SYNC, 0}, {K_CSRC, 0}, {K_NONE, 0}, {K_NONE, 0}}},
+    {G_GLO, 0, 0, "AUTO A-B", {{K_AMODE, 0}, {K_ABARS, 0}, {K_ASHP, 0}, {K_NONE, 0}}},
+    {G_GLO, 1, 0, "MIDI IN LOOK", {{K_CCIN, 0}, {K_PCIN, 0}, {K_CMODE, 0}, {K_METER, 0}}},
 };
 #define NHALF ((int32_t)(sizeof HALF / sizeof HALF[0]))
 static int32_t cur_half = -1;                   /* -1: the performance screen */
 static uint8_t page_auto;                       /* the page was opened by a knob on the performance screen: it closes by itself */
-static uint32_t pg_t0;
+static uint32_t pg_t0;                          /* the last touch (a page goes back to the performance screen 10 s after it) */
 
-static void goto_group(uint32_t g)              /* its button: into the group, then half by half, then out */
+static int32_t group_first(uint32_t g) { int32_t i; for (i = 0; i < NHALF; i++) if (HALF[i].group == g) return i; return -1; }
+static int32_t group_last(uint32_t g) { int32_t i, l = -1; for (i = 0; i < NHALF; i++) if (HALF[i].group == g) l = i; return l; }
+static int32_t half_step(int32_t h, int32_t dir)    /* SELECT: the next half the knobs can use, in the same group, round and round */
 {
-    int32_t h = cur_half, i;
-    if (h >= 0 && HALF[h].group == g) {
-        h++;
-        if (h >= NHALF || HALF[h].group != g) h = -1;
-    } else {
-        h = -1;
-        for (i = 0; i < NHALF; i++)
-            if (HALF[i].group == g) { h = i; break; }
-    }
+    uint32_t g = HALF[h].group;
+    int32_t f = group_first(g), l = group_last(g), i = h, guard = 0;
+    do {
+        i += dir;
+        if (i > l) i = f;
+        if (i < f) i = l;
+    } while ((HALF[i].flags & 1u) && guard++ < 40);
+    return i;
+}
+static int32_t pages_in(uint32_t g)             /* the pages of a group: a page is a top half and the one under it */
+{
+    int32_t i, n = 0;
+    for (i = 0; i < NHALF; i++) if (HALF[i].group == g && HALF[i].pos == 0) n++;
+    return n;
+}
+static int32_t page_of(int32_t h)               /* 0-based page of half h in its group */
+{
+    int32_t i, n = -1;
+    for (i = 0; i <= h; i++) if (HALF[i].group == HALF[h].group && HALF[i].pos == 0) n++;
+    return n;
+}
+static void goto_group(uint32_t g)              /* a group's button: into its pages, and out again from them (SELECT goes through them) */
+{
+    int32_t i, h;
+    if (cur_half >= 0 && HALF[cur_half].group == g) { cur_half = -1; return; }
+    h = group_first(g);
+    if (g == G_FX || g == G_ENV)                /* these open on the voice you are editing */
+        for (i = group_first(g); i <= group_last(g); i++)
+            if ((HALF[i].c[0].kind == K_INST || HALF[i].c[0].kind == K_ENVA) && (HALF[i].c[0].arg & 1u) == edit_sc) { h = i; break; }
+    while (h >= 0 && (HALF[h].flags & 1u)) h++;
     cur_half = h;
+}
+static uint32_t half_voice(int32_t h)           /* the voice a half is about: 0 A, 1 B, 2 neither (MIX): what the punch-ins act on */
+{
+    uint32_t i;
+    if (h < 0) return 2;
+    for (i = 0; i < 4u; i++) {
+        uint32_t k = HALF[h].c[i].kind;
+        if (k == K_INST || k == K_TIMB || k == K_DLY || k == K_LVL || k == K_DTM || k == K_DFB || k == K_DTN || k == K_RSND || k == K_RSIZ || k == K_RTON) return HALF[h].c[i].arg & 1u;
+    }
+    return 2;
 }
 
 /* ---- the other screens: the menus (SELECT knob) with rows of label, value, bar */
-enum { V_PERF, V_SCALE, V_COPY, V_SYS, V_PAGE, V_SLOTS };
+enum { V_PERF, V_SCALE, V_COPY, V_CHAIN, V_SYS, V_SYS2, V_PAGE, V_SLOTS };      /* (SELECT goes through V_SCALE .. V_SYS2 in this order) */
 static uint8_t view, view_drawn = 255;
-static uint8_t menu_pg, copy_act, save_mode, recall_mode, tr_view;
+static uint8_t menu_pg, copy_act, copy_slot, chain_sel, save_mode, recall_mode, tr_view;
 static uint32_t tr_t0;
 static char rows_cache[5][28];
-static const char *const COPY_NAME[4] = {"COPY A TO B", "COPY B TO A", "INIT SCENE", "INIT ALL"};
+static const char *const COPY_NAME[6] = {"COPY A TO B", "COPY B TO A", "INIT SCENE", "INIT ALL", "INIT SLOT", "INIT ALL SLOTS"};   /* the last two empty the saved presets: SAVE is held for them */
 
 typedef struct { char label[16], value[16]; int16_t bar; uint8_t hl; } row_t;
 static const char *view_title(void)
@@ -1536,6 +1833,8 @@ static const char *view_title(void)
     switch (view) {
     case V_SCALE: return "SCALE";
     case V_COPY: return "COPY INIT";
+    case V_CHAIN: return "CHAIN";
+    case V_SYS2: return "SYSTEM 2";
     default: return "SYSTEM";
     }
 }
@@ -1551,7 +1850,22 @@ static uint32_t view_row(uint32_t i, row_t *r)  /* 0: no such row */
         if (i == 1) { setrow(r, "SCALE", -1, 0); setval_s(r, SCALE_NAME[cur.scale % 10u]); return 1; }
         return 0;
     case V_COPY:
-        if (i == 0) { setrow(r, COPY_NAME[copy_act & 3u], -1, 1); setval_s(r, "SAVE=GO"); return 1; }
+        if (i == 0) { setrow(r, COPY_NAME[copy_act % 6u], -1, 1); setval_s(r, copy_act >= 4u ? "HOLD SAVE" : "SAVE=GO"); return 1; }
+        if (i == 1 && copy_act == 4u) { setrow(r, "SLOT", -1, 0); setval_n(r, (uint32_t)copy_slot + 1u); return 1; }
+        return 0;
+    case V_CHAIN: {
+        uint8_t c = chain[chain_sel % CHAIN_N];
+        if (i == 0) { char *p = p_str(r->label, "STEP"); *p = 0; r->bar = -1; r->hl = 1; p = p_num(r->value, (uint32_t)chain_sel + 1u); p = p_str(p, "/8"); *p = 0; return 1; }
+        if (i == 1) { setrow(r, "SLOT", -1, 0); if (c & 0x80u) setval_n(r, (uint32_t)(c & 15u) + 1u); else setval_s(r, "--"); return 1; }
+        if (i == 2) { uint32_t code = (c >> 4) & 7u; setrow(r, "MEASURES", -1, 0); setval_n(r, 1u << (code > 4u ? 4u : code)); return 1; }
+        if (i == 3) { setrow(r, "CHAIN", -1, 0); setval_s(r, chain_on ? "ON" : "OFF"); return 1; }
+        if (i == 4 && chain_on && running && chain_pos < CHAIN_N) { char *p = p_str(r->label, "PLAYING STEP"); *p = 0; r->bar = -1; r->hl = 0; p = p_num(r->value, (uint32_t)chain_pos + 1u); *p = 0; return 1; }
+        return 0;
+    }
+    case V_SYS2:
+        if (i == 0) { setrow(r, "HELP TEXT", -1, 0); setval_s(r, fxs.hint ? "ON" : "OFF"); return 1; }
+        if (i == 1) { setrow(r, "REC KEEPS", -1, 0); setval_s(r, fxs.recm ? "+MOTION" : "NOTES"); return 1; }
+        if (i == 2) { char *p = p_str(r->label, "TAP TEMPO"); *p = 0; r->bar = -1; r->hl = 0; p = p_str(r->value, "SAVE "); p = p_num(p, bpm_get(&cur)); *p = 0; return 1; }
         return 0;
     case V_SYS:
         if (i == 0) { setrow(r, "THEME", -1, 0); setval_s(r, TH.name); return 1; }
@@ -1583,18 +1897,146 @@ static void draw_row_strip(uint32_t y, const row_t *r)
     cv_blit(0, y);
 }
 
-static void draw_slots(void)                    /* the 16 preset slots: filled square = saved, outline = empty */
+/* ---- the beginner text (HELP TEXT in the SYSTEM 2 menu): a note on the knob you touch, in the bottom third of the screen */
+static const char *help_text(cell_t c)
+{
+    static const char *const PH[6] = {"Blends each step's chance into the next step's.", "The chance that a step stays silent.",
+        "How long notes last: high is smooth and joined.", "Play direction: the middle is forward, the sides reverse or wander.",
+        "How many chord notes join each note (POLY on).", "The chance a note jumps an octave."};
+    switch (c.kind) {
+    case K_DENS: return "Raises or lowers every step's chance of sounding.";
+    case K_SWING: return "Delays every other step for a shuffled feel.";
+    case K_P: return PH[c.arg % 6u];
+    case K_AB: return "Crossfades between scene A and scene B.";
+    case K_INST: return "The sound of this voice.";
+    case K_TIMB: return "Tone of this voice, darker to brighter.";
+    case K_DLY: return "How much of this voice goes into its echo.";
+    case K_LVL: return "How loud this voice is.";
+    case K_LSPD: return "How fast this LFO moves its parameter, in beats and bars.";
+    case K_LDEP: return "How far this LFO pushes its parameter.";
+    case K_LSHP: return "The wave the LFO draws: sine, triangle, saw, ramp, square or random.";
+    case K_LPHS: return "Where in its wave the LFO starts each time you press PLAY.";
+    case K_BPM: return "The tempo, in beats a minute.";
+    case K_STEP: return "How long a step is, from a quarter note to a 32nd.";
+    case K_TRANS: return "Moves every note up or down in semitones.";
+    case K_THEME: return "The colours of the screen.";
+    case K_ROOT: return "The key note of the scale.";
+    case K_SCALE: return "The scale the arp takes its notes from.";
+    case K_CHA: case K_CHB: return "The MIDI channel this voice sends on.";
+    case K_RSND: return "How much of this voice goes into its reverb.";
+    case K_RSIZ: return "Reverb size: a small room up to a long hall.";
+    case K_RTON: return "Reverb brightness: low is dark and soft.";
+    case K_DTM: return "Echo time, as a note length at the tempo.";
+    case K_DFB: return "How many echoes repeat before they fade.";
+    case K_DTN: return "Echo tone: dark to bright.";
+    case K_SYNC: return "Sends MIDI start, stop and clock to your other gear.";
+    case K_CHRD: return "The kind of chord POLY builds.";
+    case K_VOIC: return "How the chord notes are spread: close or open.";
+    case K_AMODE: return "Lets the A-B crossfade move by itself: once, ping-pong or saw.";
+    case K_ABARS: return "How many measures one A to B trip takes.";
+    case K_ASHP: return "Linear, or slowing near the ends.";
+    case K_CSRC: return "Where the tempo comes from: this unit or an outside clock.";
+    case K_CMODE: return "Colour scheme: soft, rich or wild.";
+    case K_METER: return "Shows the output level next to the globe.";
+    case K_CCIN: return "Lets MIDI control changes move the parameters.";
+    case K_PCIN: return "Lets MIDI program changes recall presets.";
+    case K_PANA: case K_PANB: return "Where this voice sits, left to right.";
+    case K_ENVA: return "How fast a note fades in.";
+    case K_ENVD: return "How fast it falls to the sustain level.";
+    case K_ENVS: return "The level it holds while the key is down.";
+    case K_ENVR: return "How long a note rings after you let go.";
+    case K_POLY: return "Builds a chord on every note; HARMONY sets its size.";
+    default: return "";
+    }
+}
+static const char *const PI_NAME[16] = {"THROW", "REPEAT", "DLY 1/16", "DLY 1/4", "BLOOM", "HALL", "DARK", "AIR",
+                                        "CLOSE", "OPEN", "DUCK", "KILL", "LONG", "SHORT", "SLOW", "FLIP"};   /* the punch-ins: the lower keys on the FX pages */
+static cell_t help_c;
+static uint32_t help_until, help_gen, help_drawn;
+static void help_set(cell_t c)
+{
+    if (!fxs.hint || c.kind == K_NONE) return;
+    help_c = c; help_until = fm1_ms + 4000u; help_gen++;
+}
+static void draw_help(void)
+{
+    char name[12], val[16], line[32];
+    int32_t bar;
+    uint32_t scn, y = 184, n = 0;
+    const char *t = help_text(help_c);
+    cell_text(help_c, name, val, &bar, &scn);
+    lcd_fill(0, 162, 240, 78, C_BLACK);
+    draw_text_box(8, 166, 224, &FONT_S, name, scn == 1u ? C_A : scn == 2u ? C_B : GCOL(cur_half >= 0 ? HALF[cur_half].group : G_HOME), 0);
+    while (*t && y < 224u) {                                    /* wrapped at 28 characters, on a space */
+        uint32_t k = 0, last = 0;
+        while (t[k] && k < 28u) { if (t[k] == ' ') last = k; k++; }
+        if (t[k] && last) k = last;
+        n = 0;
+        while (n < k) { line[n] = t[n]; n++; }
+        line[n] = 0;
+        draw_text_box(8, y, 224, &FONT_S, line, pal[3], 0);
+        t += k;
+        while (*t == ' ') t++;
+        y += 16u;
+    }
+}
+
+static void draw_dots(uint32_t g, int32_t h)    /* the pages of a group as dots: lit up to the page you are on (all of them on the last) */
+{
+    int32_t n = pages_in(g), k = page_of(h), i;
+    uint16_t gc = GCOL(g);
+    lcd_fill(150, 2, 90, 16, C_BLACK);
+    for (i = 0; i < n; i++) lcd_fill((uint32_t)(236 - (n - i) * 10), 7, 6, 6, i <= k ? gc : pal[1]);
+}
+
+static void draw_wave(int32_t hi, uint32_t y, int lit)      /* an LFO's wave, with a dot where it is now */
+{
+    uint32_t i = HALF[hi].c[0].arg % 6u, sh = (cur.lfo_sp[i] & 7u) % 6u, phs = (uint32_t)(cur.lfo_sp[i] >> 3) << 27, r = cur.lfo_rate[i];
+    int32_t x, py = 32, A = 1 + (int32_t)cur.lfo_depth[i] * 24 / 255, yy;
+    uint16_t gc = GCOL(G_LFO), fc = lit ? gc : dimc(gc, 70), wc = r ? gc : dimc(gc, 60);
+    cv_begin(240, 64, C_BLACK);
+    cv_rect(2, 0, 236, 1, fc); cv_rect(2, 63, 236, 1, fc); cv_rect(2, 0, 1, 64, fc); cv_rect(237, 0, 1, 64, fc);
+    cv_rect(6, 32, 228, 1, pal[0]);
+    for (x = 0; x < 228; x++) {
+        uint32_t ph = (uint32_t)x * 18838535u + phs;
+        int32_t v = sh == 5u ? (int32_t)(((ph >> 29) * 2654435761u) >> 16 & 0xFFFFu) - 32768 : lfo_wave(sh, ph, 0);
+        yy = 32 - (v * A) / 32768;
+        if (!r) yy = 32;
+        if (x == 0) py = yy;
+        cv_rect(6 + x, yy < py ? yy : py, 1, (yy < py ? py - yy : yy - py) + 1, wc);
+        py = yy;
+    }
+    if (r) {
+        int32_t cx = (int32_t)((((lfo_ph[i] + phs) >> 24) * 228u) >> 8);
+        yy = 32 - (lfo_out[i] * A) / 32768;
+        cv_rect(6 + cx, 4, 1, 56, dimc(gc, 90));
+        cv_rect(6 + cx - 3, yy - 3, 7, 7, pal[4]);
+    } else cv_text(104, 24, &FONT_S, "OFF", pal[2]);
+    cv_blit(0, y);
+}
+
+static void draw_slots(void)                    /* the 16 preset slots: filled = saved, outline = empty, the number inside; the keys 1-16 pick them */
 {
     uint32_t i;
     bank_open();
+    draw_text_box(0, 18, 240, &FONT_L, save_mode ? "SAVE TO" : "RECALL", save_mode ? pal[4] : C_A, 1);
+    draw_text_box(0, 54, 240, &FONT_L, "SLOT", save_mode ? pal[4] : C_A, 1);
     cv_begin(240, 64, C_BLACK);
     for (i = 0; i < 16u; i++) {
         int32_t x = 10 + (int32_t)(i & 7u) * 28, y = 4 + (int32_t)(i >> 3) * 30;
+        char t[4], *q = p_num(t, i + 1u);
         uint16_t c = i == glob.slot ? pal[4] : C_A;
-        if (bank.p[i].used) cv_rect(x, y, 24, 24, c);
-        else { cv_rect(x, y, 24, 1, pal[1]); cv_rect(x, y + 23, 24, 1, pal[1]); cv_rect(x, y, 1, 24, pal[1]); cv_rect(x + 23, y, 1, 24, pal[1]); }
+        *q = 0;
+        if (bank.p[i].used) { cv_rect(x, y, 24, 24, c); cv_text(x + 12 - text_w(&FONT_S, t) / 2, y + 4, &FONT_S, t, C_BLACK); }
+        else {
+            cv_rect(x, y, 24, 1, pal[1]); cv_rect(x, y + 23, 24, 1, pal[1]); cv_rect(x, y, 1, 24, pal[1]); cv_rect(x + 23, y, 1, 24, pal[1]);
+            cv_text(x + 12 - text_w(&FONT_S, t) / 2, y + 4, &FONT_S, t, pal[1]);
+        }
     }
     cv_blit(0, 92);
+    draw_text_box(0, 164, 240, &FONT_S, save_mode ? "PRESS A LOWER KEY 1-16" : "KEY 1-16 RECALLS THAT SLOT", pal[3], 1);
+    draw_text_box(0, 182, 240, &FONT_S, "FILLED = SAVED  BRIGHT = LAST", pal[2], 1);
+    draw_text_box(0, 206, 240, &FONT_S, save_mode ? "SAVE AGAIN TO CANCEL" : "HOLD SAVE TO LEAVE", pal[2], 1);
 }
 
 /* one panel of a page: four cells, the lit half framed bright */
@@ -1640,6 +2082,11 @@ static uint32_t panel_sig(int32_t hi, int lit)
 {
     uint32_t i, h = (lit ? 99u : 7u) + (uint32_t)fxs.cmode * 1000u + (uint32_t)glob.theme * 17u;     /* (a new colour mode or theme draws it again) */
     if (hi < 0) return h + 1u;
+    if (HALF[hi].c[0].kind == K_WAVE) {         /* an LFO's wave: its settings, and a new picture every 70 ms while it moves */
+        uint32_t l = HALF[hi].c[0].arg % 6u;
+        h = h * 31u + cur.lfo_rate[l] + 16u * cur.lfo_depth[l] + 4096u * cur.lfo_sp[l] + l * 77u;
+        return h + (cur.lfo_rate[l] ? fm1_ms / 70u : 0u);
+    }
     for (i = 0; i < 4u; i++) {
         char name[12], val[16];
         int32_t bar;
@@ -1671,9 +2118,9 @@ static void draw_tick(void)
         view_drawn = view;
         for (i = 0; i < 5u; i++) rows_cache[i][0] = 1;
         head_cache[0] = 0x7F; pg_head[0] = 1;                 /* (a value no header has: it is drawn again) */
-        foot_sig = 0; morph_sig = 0; slots_sig = 0; pg_sig[0] = pg_sig[1] = 0;
+        foot_sig = 0; morph_sig = 0; slots_sig = 0; pg_sig[0] = pg_sig[1] = 0; help_drawn = 0;
         t_anim = 0;
-        if (view == V_SCALE || view == V_COPY || view == V_SYS) draw_text_box(0, 18, 240, &FONT_L, view_title(), C_A, 1);
+        if (view == V_SCALE || view == V_COPY || view == V_CHAIN || view == V_SYS || view == V_SYS2) draw_text_box(0, 18, 240, &FONT_L, view_title(), C_A, 1);
         return;
     }
     if (view == V_PERF || view == V_PAGE) {
@@ -1686,7 +2133,7 @@ static void draw_tick(void)
         if (view == V_PERF) {
             char hs[8];
             hs[0] = (char)(edit_sc + 1u); hs[1] = (char)(cur.mode + 1u); hs[2] = (char)(latch + 1u);
-            hs[3] = (char)(cur.poly + 1u + 2u * auto_roll); hs[4] = (char)(frozen + 1u + 2u * (bpm_get(&cur) >> 8)); hs[5] = (char)(bpm_get(&cur) & 255u);
+            hs[3] = (char)(cur.poly + 1u + 2u * auto_roll + 4u * rec_state + 12u * chain_on); hs[4] = (char)(frozen + 1u + 2u * (bpm_get(&cur) >> 8)); hs[5] = (char)(bpm_get(&cur) & 255u);
             hs[6] = (char)(1u + glob.theme); hs[7] = 0;
             if (memcmp(head_cache, hs, 7) != 0) { memcpy(head_cache, hs, 8); draw_head(); return; }
         } else {
@@ -1698,15 +2145,25 @@ static void draw_tick(void)
             p = p_str(hs, GROUP_NAME[HALF[lit].group]);
             p = p_str(p, "  ");
             p_str(p, HALF[lit].tab);
+            hs[36] = (char)pages_in(HALF[lit].group); hs[37] = (char)(1 + page_of(lit)); hs[38] = (char)(1 + HALF[lit].group);
             hs[39] = (char)(1 + glob.theme);                                    /* (a new theme draws the header again) */
-            if (memcmp(pg_head, hs, sizeof hs) != 0) { memcpy(pg_head, hs, sizeof hs); draw_text_box(8, 2, 224, &FONT_S, hs, GCOL(HALF[lit].group), 0); return; }
+            if (memcmp(pg_head, hs, sizeof hs) != 0) {
+                memcpy(pg_head, hs, sizeof hs);
+                draw_text_box(8, 2, 140, &FONT_S, hs, GCOL(HALF[lit].group), 0);
+                draw_dots(HALF[lit].group, lit);
+                return;
+            }
             s0 = panel_sig(top, HALF[lit].pos == 0);
-            if (s0 != pg_sig[0]) { pg_sig[0] = s0; draw_panel(top, 22, HALF[lit].pos == 0); return; }
+            if (s0 != pg_sig[0]) { pg_sig[0] = s0; if (HALF[top].c[0].kind == K_WAVE) draw_wave(top, 22, HALF[lit].pos == 0); else draw_panel(top, 22, HALF[lit].pos == 0); return; }
             s1 = panel_sig(bot, HALF[lit].pos == 1);
-            if (s1 != pg_sig[1]) { pg_sig[1] = s1; draw_panel(bot, 92, HALF[lit].pos == 1); return; }
+            if (s1 != pg_sig[1]) { pg_sig[1] = s1; if (bot < 0) lcd_fill(0, 92, 240, 64, C_BLACK); else draw_panel(bot, 92, HALF[lit].pos == 1); return; }
         }
-        if (m != morph_sig) { morph_sig = m; draw_morph(); return; }
-        if (f != foot_sig) { foot_sig = f; draw_foot(); return; }
+        { uint32_t hs = (fxs.hint && (int32_t)(help_until - fm1_ms) > 0) ? help_gen * 2u + 1u : 0u;    /* the beginner text takes the bottom third while it is on */
+          if (hs != help_drawn) { help_drawn = hs; if (hs) draw_help(); else { lcd_fill(0, 162, 240, 78, C_BLACK); morph_sig = 0; foot_sig = 0; } return; }
+          if (!hs) {
+              if (m != morph_sig) { morph_sig = m; draw_morph(); return; }
+              if (f != foot_sig) { foot_sig = f; draw_foot(); return; }
+          } }
         if (view == V_PERF) {
             if (fm1_ms - t_anim >= 70u) { t_anim = fm1_ms; gyaw += 0x01400000u; draw_globe_hud(); return; }
             if (fm1_ms - t_tower >= 45u) { t_tower = fm1_ms; draw_towers(); return; }
@@ -1758,11 +2215,24 @@ static void roll(void)                          /* randomise the scene the knobs
 
 static void do_copy(void)
 {
-    switch (copy_act & 3u) {
+    switch (copy_act % 6u) {
     case 0: cur.sc[1] = cur.sc[0]; hud("COPIED", "A TO B", -1); flash(KEY_LED(BLACK_KEY[8]), 3); flash(KEY_LED(BLACK_KEY[9]), 3); break;
     case 1: cur.sc[0] = cur.sc[1]; hud("COPIED", "B TO A", -1); flash(KEY_LED(BLACK_KEY[8]), 3); flash(KEY_LED(BLACK_KEY[9]), 3); break;
     case 2: scene_init(&cur.sc[edit_sc], (int)edit_sc); hud("INIT", edit_sc ? "SCENE B" : "SCENE A", -1); flash(KEY_LED(BLACK_KEY[8 + edit_sc]), 3); break;
-    default: preset_init(&cur); hud("INIT", "ALL", -1); flash(KEY_LED(BLACK_KEY[8]), 3); flash(KEY_LED(BLACK_KEY[9]), 3); break;
+    case 3: preset_init(&cur); mot_on = 0; hud("INIT", "ALL", -1); flash(KEY_LED(BLACK_KEY[8]), 3); flash(KEY_LED(BLACK_KEY[9]), 3); break;
+    case 4:                                                                       /* one saved slot: emptied */
+        bank_open();
+        memset(&bank.p[copy_slot & 15u], 0, sizeof bank.p[0]);
+        bank_save();
+        hud_num("INIT SLOT", (int32_t)(copy_slot & 15u) + 1, 0);
+        flash(KEY_LED(WHITE_KEY[copy_slot & 15u]), 3);
+        break;
+    default:                                                                      /* all sixteen */
+        bank_open();
+        memset(bank.p, 0, sizeof bank.p);
+        bank_save();
+        hud("INIT", "ALL SLOTS", -1);
+        break;
     }
     flash(BTN_SAVE, 3);
 }
@@ -1787,11 +2257,12 @@ static void select_view(void)
     view = v;
 }
 
-typedef struct { preset_t cur; uint8_t ver, theme, ch0, ch1, slot; } saved_t;     /* the record up to v1.0 (85 B) */
+typedef struct { preset16_t cur; uint8_t ver, theme, ch0, ch1, slot; } saved_t;   /* the record up to v1.0 (85 B) */
 typedef struct { saved_t s; uint8_t bt[BT_KEPT]; } saved2_t;                         /* + the radio's kept bytes (225 B) */
 typedef struct { saved_t s; uint8_t bt[BT_KEPT]; uint8_t fx[4]; } saved3_t;               /* + delay time, feedback, tone, sync (229 B) */
-typedef struct { saved_t s; uint8_t bt[BT_KEPT]; uint8_t fx[8]; } saved4_t;               /* + colour, meter, CC / program change in, the pans (233 B) */
+typedef struct { saved_t s; uint8_t bt[BT_KEPT]; uint8_t fx[8]; } saved4_t;               /* + colour, meter, CC / program change in, the pans (233 B): v1.6 */
 typedef struct { saved_t s; uint8_t bt[112]; } saved1b_t;                            /* the record of the first Bluetooth builds (197 B) */
+typedef struct { preset_t cur; uint8_t ver, theme, ch0, ch1, slot; uint8_t bt[BT_KEPT]; uint8_t fx[8]; uint8_t chain[CHAIN_N]; } saved5_t;   /* v1.7 */
 
 static void leds(uint32_t lit_notes)
 {
@@ -1799,8 +2270,9 @@ static void leds(uint32_t lit_notes)
     int32_t g = cur_half >= 0 ? (int32_t)HALF[cur_half].group : -1;
     led(BTN_ARP, cur.mode == MODE_ARP);
     led(BTN_SEQ, cur.mode == MODE_SEQ);
-    led(BTN_SEL, cur.poly);
-    led(BTN_REC, frozen);
+    led(BTN_SEL, frozen);
+    led(BTN_REC, rec_state == 2u ? 1 : rec_state == 1u ? (int)blink : 0);
+    led(BTN_ENV, g == G_ENV);
     led(BTN_PLAY, running);
     led(BTN_EDIT, auto_roll);
     led(BTN_FX, g == G_FX);
@@ -1823,59 +2295,72 @@ static void leds(uint32_t lit_notes)
     led(KEY_LED(BLACK_KEY[10]), mute_mask != 0);
 }
 
-static saved4_t sv;
 
-/* the global settings kept in the record's fx bytes: 4 of them in the older records, 8 now */
+/* the global settings kept in the record's fx bytes: 4 of them in the older records, 8 now. The delay's three (bits 0..1 of byte 0, bytes 1 and 2) are
+ * the delay of v1.0 .. v1.6 (one for both scenes): kept as they were, for the presets of that time that are converted when they are read (leg_dly) */
 static void fx_load(const uint8_t *f, uint32_t n)
 {
-    fxs.dtime = f[0] & 3u; fxs.amode = (f[0] >> 2) & 3u; fxs.ashp = (f[0] >> 4) & 1u; fxs.abars = (f[0] >> 5) & 7u;
+    leg_dly[0] = f[0] & 3u; leg_dly[1] = f[1] > 230u ? 230u : f[1]; leg_dly[2] = f[2];
+    fxs.amode = (f[0] >> 2) & 3u; fxs.ashp = (f[0] >> 4) & 1u; fxs.abars = (f[0] >> 5) & 7u;
     if (fxs.abars > 6u || !(f[0] & ~3u)) fxs.abars = 2;               /* (a record from before AUTO: its default, 4 bars) */
-    fxs.dfb = f[1] > 230u ? 230u : f[1]; fxs.dtone = f[2];
     fxs.sync = (f[3] & 3u) > 2u ? 2u : (f[3] & 3u); fxs.chord = (f[3] >> 2) & 3u; fxs.voic = (f[3] >> 4) & 3u; if (fxs.voic > 2u) fxs.voic = 0;
     fxs.csrc = (f[3] >> 6) & 3u; if (fxs.csrc > 2u) fxs.csrc = 0;
     if (n >= 8u) {
         fxs.cmode = f[4] & 3u; if (fxs.cmode > 2u) fxs.cmode = 1;
         fxs.meter = (f[4] >> 2) & 1u; fxs.ccin = (f[4] >> 3) & 1u; fxs.pcin = (f[4] >> 4) & 1u;
         fxs.pana = f[5]; fxs.panb = f[6];
+        fxs.hint = f[7] & 1u; fxs.recm = (f[7] >> 1) & 1u;
     }
 }
 static void fx_save(uint8_t *f)
 {
-    f[0] = (uint8_t)(fxs.dtime | fxs.amode << 2 | fxs.ashp << 4 | fxs.abars << 5);
-    f[1] = fxs.dfb; f[2] = fxs.dtone;
+    f[0] = (uint8_t)(leg_dly[0] | fxs.amode << 2 | fxs.ashp << 4 | fxs.abars << 5);
+    f[1] = leg_dly[1]; f[2] = leg_dly[2];
     f[3] = (uint8_t)(fxs.sync | fxs.chord << 2 | fxs.voic << 4 | fxs.csrc << 6);
     f[4] = (uint8_t)(fxs.cmode | fxs.meter << 2 | fxs.ccin << 3 | fxs.pcin << 4);
-    f[5] = fxs.pana; f[6] = fxs.panb; f[7] = 0;
+    f[5] = fxs.pana; f[6] = fxs.panb; f[7] = (uint8_t)(fxs.hint | fxs.recm << 1);
 }
+
+static saved5_t sv;
 
 static void app_init(void)
 {
+    uint32_t i;
     preset_init(&cur);
     theme_set(0);
     globe_init();
     rng_s ^= fm1_ticks();
     if (!rng_s) rng_s = 1;
     memset(&sv, 0, sizeof sv);
-    if (settings_load(&sv, sizeof sv) == 0) fx_load(sv.fx, 8);
-    else {                                                      /* an older record: fewer bytes (the newer settings keep their defaults) */
+    if (settings_load(&sv, sizeof sv) == 0) { fx_load(sv.fx, 8); memcpy(chain, sv.chain, CHAIN_N); }
+    else {                                                      /* an older record (v1.0 .. v1.6): its preset has the old layout, and fewer bytes follow it */
+        saved4_t o4;
         saved3_t o3;
         saved2_t o2;
         saved1b_t o1;
+        saved_t o0;
+        const saved_t *os = 0;
         memset(&sv, 0, sizeof sv);
-        if (settings_load(&o3, sizeof o3) == 0) { sv.s = o3.s; memcpy(sv.bt, o3.bt, sizeof o3.bt); fx_load(o3.fx, 4); }
-        else if (settings_load(&o2, sizeof o2) == 0) { sv.s = o2.s; memcpy(sv.bt, o2.bt, sizeof o2.bt); }          /* (no delay, sync ...) */
-        else if (settings_load(&o1, sizeof o1) == 0) { sv.s = o1.s; memcpy(sv.bt, o1.bt, sizeof o1.bt); }          /* (no pairing) */
-        else if (settings_load(&sv.s, sizeof sv.s) != 0) sv.s.ver = 0;                                             /* (no radio bytes either) */
+        if (settings_load(&o4, sizeof o4) == 0) { os = &o4.s; memcpy(sv.bt, o4.bt, sizeof o4.bt); fx_load(o4.fx, 8); }
+        else if (settings_load(&o3, sizeof o3) == 0) { os = &o3.s; memcpy(sv.bt, o3.bt, sizeof o3.bt); fx_load(o3.fx, 4); }
+        else if (settings_load(&o2, sizeof o2) == 0) { os = &o2.s; memcpy(sv.bt, o2.bt, sizeof o2.bt); }          /* (no delay, sync ...) */
+        else if (settings_load(&o1, sizeof o1) == 0) { os = &o1.s; memcpy(sv.bt, o1.bt, sizeof o1.bt); }          /* (no pairing) */
+        else if (settings_load(&o0, sizeof o0) == 0) os = &o0;                                                     /* (no radio bytes either) */
+        if (os && os->ver == 1u) {
+            preset_from16(&sv.cur, &os->cur);
+            sv.ver = 1; sv.theme = os->theme; sv.ch0 = os->ch0; sv.ch1 = os->ch1; sv.slot = os->slot;
+        }
     }
     bt_init(sv.bt);
-    if (sv.s.ver == 1u) {
-        cur = sv.s.cur; rv_legacy(&cur); glob.theme = sv.s.theme % NTHEME; glob.ch[0] = sv.s.ch0 & 15u; glob.ch[1] = sv.s.ch1 & 15u; glob.slot = sv.s.slot & 15u;
+    if (sv.ver == 1u) {
+        cur = sv.cur; glob.theme = sv.theme % NTHEME; glob.ch[0] = sv.ch0 & 15u; glob.ch[1] = sv.ch1 & 15u; glob.slot = sv.slot & 15u;
         bpm_set(&cur, (int32_t)bpm_get(&cur));
         cur.div &= 3u; cur.scale %= 10u; cur.root %= 12u; cur.oct = (int8_t)clampi(cur.oct, -3, 3);
         cur.tr = (int8_t)clampi(cur.tr, -12, 12);
+        for (i = 0; i < 6u; i++) if (cur.lfo_rate[i] > 8u) cur.lfo_rate[i] = 0;
+        for (i = 0; i < 2u; i++) { cur.sc[i].dtime &= 3u; if (cur.sc[i].dfb > 230u) cur.sc[i].dfb = 230u; }
         theme_set(glob.theme);
     }
-    dly_len = 22000;
     weights();
     lcd_fill(0, 0, 240, 240, C_BLACK);
     draw_text_box(0, 90, 240, &FONT_L, APP_NAME, pal[4], 1);
@@ -1914,7 +2399,9 @@ static int cc_in(uint32_t cc, uint32_t v)
     else if (cc == 70u || cc == 71u) cur.sc[cc - 70u].timbre = (uint8_t)v8;
     else if (cc == 72u || cc == 73u) cur.sc[cc - 72u].level = (uint8_t)v8;
     else if (cc == 74u || cc == 75u) cur.sc[cc - 74u].dsend = (uint8_t)v8;
-    else if (cc >= 85u && cc <= 88u) cur.rv[cc - 85u] = (uint8_t)v8;
+    else if (cc == 85u || cc == 86u) cur.sc[cc - 85u].rsend = (uint8_t)v8;
+    else if (cc == 87u) cur.sc[0].rsize = cur.sc[1].rsize = (uint8_t)v8;                 /* the size and the tone: both voices */
+    else if (cc == 88u) cur.sc[0].rtone = cur.sc[1].rtone = (uint8_t)v8;
     else if (cc == 90u) fxs.pana = (uint8_t)v8;
     else if (cc == 91u) fxs.panb = (uint8_t)v8;
     else return 0;
@@ -1922,16 +2409,37 @@ static int cc_in(uint32_t cc, uint32_t v)
 }
 static void pc_in(uint32_t prog)
 {
+    bank_open();
     if (prog > 15u || !bank.p[prog].used) return;
     if (running) pend_slot = (int32_t)prog; else recall_apply((int32_t)prog);
     hud("PROGRAM", "", -1);
     { char *q = p_num(hud_val, prog + 1u); *q = 0; }
 }
 
+static void do_panic(void)                      /* PLAY held, then OCT- and OCT+ together: everything stops, the notes, the echoes and the reverb */
+{
+    uint32_t i;
+    if (running) transport(0);
+    offs_run(0, 1);
+    voices_off();
+    for (i = 0; i < 2u; i++) { midi_send(0xB0u | glob.ch[i], 123u, 0); midi_send(0xB0u | glob.ch[i], 120u, 0); }     /* all notes off, all sound off */
+    held_n = 0; latch = 0; latch_len = 0; first_of_chord = 1;
+    freeze_set(0);
+    rec_state = 0; chain_on = 0; mot_on = 0;
+    kill_until = fm1_ms + 1500u;
+    hud("PANIC", "ALL STOPPED", -1);
+}
+
+static int cell_fast(uint32_t k)                /* the cells that take bigger steps when the knob is turned fast */
+{
+    return k == K_P || k == K_DENS || k == K_SWING || k == K_LDEP || k == K_TIMB || k == K_DLY || k == K_LVL || k == K_BPM || k == K_RSND || k == K_RSIZ ||
+           k == K_RTON || k == K_DFB || k == K_DTN || k == K_PANA || k == K_PANB || (k >= K_ENVA && k <= K_ENVR);
+}
+
 static void app_step(void)                      /* one pass of the main loop (a browser calls it by itself) */
 {
     static uint32_t prev, dirty, t_change, save_t0, save_down, save_long, arp_t0, arp_down, arp_long, edit_t0, edit_down,
-                    edit_long, t_ui, mute_t0;
+                    edit_long, t_ui, mute_t0, play_t0, play_down, play_long, panic_until, rec_t0, rec_down, rec_long;
     static uint8_t liven[27], booted;
     uint32_t k, keys, down, up, rel, b, now, lit = 0, kk;
     uint8_t st, d1, d2;
@@ -1990,12 +2498,17 @@ static void app_step(void)                      /* one pass of the main loop (a 
                         hud_scn = (uint8_t)(edit_sc + 1u);
                         dirty = 1; t_change = fm1_ms;
                     }
+            } else if (cur_half >= 0 && HALF[cur_half].group == G_FX) {          /* on the FX pages the lower keys are punch-ins: momentary effects on the voice shown */
+                pi_mask |= (uint16_t)(1u << k);
+                hud(PI_NAME[k], pi_voice == 0u ? "A" : pi_voice == 1u ? "B" : "A+B", -1);
+                hud_scn = pi_voice == 0u ? 1u : pi_voice == 1u ? 2u : 0u;
             } else {
                 liven[k] = (uint8_t)clampi((int32_t)note, 0, 127);
                 key_note(liven[k], 1);
             }
         }
         if (up & bit) {
+            pi_mask &= (uint16_t)~(1u << k);
             if (liven[k]) { key_note(liven[k], 0); liven[k] = 0; }
         }
     }
@@ -2021,6 +2534,11 @@ static void app_step(void)                      /* one pass of the main loop (a 
 
     /* --- the buttons */
     b = fm1_input_edges(&rel);
+    if ((int32_t)(panic_until - fm1_ms) > 0) {                                  /* the panic prompt is up: OCT- and OCT+ together do it, and they do not change the octave */
+        uint32_t both = (1u << BTN_OCT_DOWN) | (1u << BTN_OCT_UP);
+        if ((fm1_in.buttons & both) == both) { do_panic(); panic_until = 0; }
+        b &= ~both;
+    }
     if (b & (1u << BTN_OCT_DOWN) && cur.oct > -3) { cur.oct--; dirty = 1; t_change = fm1_ms; hud_num("OCTAVE", cur.oct, 1); ov_btn = 1u << BTN_OCT_DOWN; }
     if (b & (1u << BTN_OCT_UP) && cur.oct < 3) { cur.oct++; dirty = 1; t_change = fm1_ms; hud_num("OCTAVE", cur.oct, 1); ov_btn = 1u << BTN_OCT_UP; }
     if (b & (1u << BTN_ARP)) { arp_down = 1; arp_t0 = fm1_ms; arp_long = 0; }
@@ -2036,12 +2554,28 @@ static void app_step(void)                      /* one pass of the main loop (a 
         arp_down = 0;
     }
     if (b & (1u << BTN_SEQ)) { cur.mode = MODE_SEQ; hud_btn("MODE", "SEQ", BTN_SEQ); dirty = 1; t_change = fm1_ms; }
-    if (b & (1u << BTN_SEL)) {
-        if (cur_half >= 0 && HALF[cur_half].c[0].kind == K_BPM) { tap_tempo(); dirty = 1; t_change = fm1_ms; }   /* on the TEMPO KEY page: tap the tempo */
-        else { cur.poly = !cur.poly; hud_btn("POLY", cur.poly ? "ON" : "OFF", BTN_SEL); dirty = 1; t_change = fm1_ms; }
+    if (b & (1u << BTN_SEL)) { freeze_set(!frozen); hud_btn("FREEZE", frozen ? "ON" : "OFF", BTN_SEL); }
+    if (b & (1u << BTN_REC)) { rec_down = 1; rec_t0 = fm1_ms; rec_long = 0; }
+    if (rec_down && !rec_long && fm1_ms - rec_t0 > 600u) {                      /* long: put the pattern back as it was before the last capture */
+        rec_long = 1;
+        if (rec_undo.ok) { rec_restore(); hud_btn("REC", "UNDONE", BTN_REC); dirty = 1; t_change = fm1_ms; }
+        else hud_btn("REC", "NOTHING TO UNDO", BTN_REC);
     }
-    if (b & (1u << BTN_REC)) { freeze_set(!frozen); hud_btn("FREEZE", frozen ? "ON" : "OFF", BTN_REC); }
-    if (b & (1u << BTN_PLAY)) { transport(!running); hud_btn(running ? "PLAY" : "STOP", running ? "RUNNING" : "STOPPED", BTN_PLAY); }
+    if (rel & (1u << BTN_REC)) {
+        if (rec_down && !rec_long) {
+            if (rec_state) { rec_state = 0; hud("REC", "CANCELLED", -1); }
+            else { rec_state = 1; hud_btn("REC", running ? "ARMED" : "ARMED: PRESS PLAY", BTN_REC); }
+        }
+        rec_down = 0;
+    }
+    if (b & (1u << BTN_PLAY)) { transport(!running); hud_btn(running ? "PLAY" : "STOP", running ? "RUNNING" : "STOPPED", BTN_PLAY); play_down = 1; play_t0 = fm1_ms; play_long = 0; }
+    if (play_down && !play_long && (fm1_in.buttons & (1u << BTN_PLAY)) && fm1_ms - play_t0 > 800u) {     /* long: the panic prompt */
+        play_long = 1;
+        panic_until = fm1_ms + 4000u;
+        hud("PANIC?", "OCT- + OCT+", -1);
+        hud_until = fm1_ms + 4000u;
+    }
+    if (rel & (1u << BTN_PLAY)) play_down = 0;
     if (b & (1u << BTN_EDIT)) { edit_down = 1; edit_t0 = fm1_ms; edit_long = 0; }
     if (edit_down && !edit_long && fm1_ms - edit_t0 > 600u) {                    /* long: auto re-roll each measure */
         edit_long = 1;
@@ -2052,27 +2586,28 @@ static void app_step(void)                      /* one pass of the main loop (a 
         if (edit_down && !edit_long) { roll(); flash(KEY_LED(BLACK_KEY[8 + edit_sc]), 3); flash(BTN_EDIT, 3); hud("RANDOMISED", edit_sc ? "SCENE B" : "SCENE A", -1); hud_scn = (uint8_t)(edit_sc + 1u); dirty = 1; t_change = fm1_ms; }
         edit_down = 0;
     }
-    if (b & ((1u << BTN_FX) | (1u << BTN_LFO) | (1u << BTN_GLO) | (1u << BTN_HOME))) { tr_view = 0; menu_pg = 0; hud_until = 0; page_auto = 0; }
+    if (b & ((1u << BTN_FX) | (1u << BTN_LFO) | (1u << BTN_GLO) | (1u << BTN_HOME) | (1u << BTN_ENV))) { tr_view = 0; menu_pg = 0; hud_until = 0; page_auto = 0; }
     if (b & (1u << BTN_FX)) goto_group(G_FX);
+    if (b & (1u << BTN_ENV)) goto_group(G_ENV);
     if (b & (1u << BTN_LFO)) goto_group(G_LFO);
     if (b & (1u << BTN_GLO)) goto_group(G_GLO);
     if (b & (1u << BTN_HOME)) {
         save_mode = recall_mode = 0;
-        if (cur_half >= 0 && HALF[cur_half].group != G_HOME) cur_half = -1;
+        if (cur_half >= 0) cur_half = -1;                                        /* from any page: back to the performance screen */
         else goto_group(G_HOME);
     }
     if (b & (1u << BTN_SAVE)) {
-        if (tr_view == V_COPY) { do_copy(); dirty = 1; t_change = fm1_ms; tr_t0 = fm1_ms; }
+        if (tr_view == V_COPY && copy_act < 4u) { do_copy(); dirty = 1; t_change = fm1_ms; tr_t0 = fm1_ms; }
+        else if (tr_view == V_SYS2) { tap_tempo(); dirty = 1; t_change = fm1_ms; tr_t0 = fm1_ms; }       /* SYSTEM 2: SAVE taps the tempo */
         else { save_down = 1; save_t0 = fm1_ms; save_long = 0; }
     }
-    if (save_down && !save_long && fm1_ms - save_t0 > 600u) {                    /* long: recall mode, stays */
+    if (save_down && !save_long && fm1_ms - save_t0 > 600u) {                    /* long: recall mode, stays (in COPY INIT: the slot actions) */
         save_long = 1;
-        save_mode = 0;
-        recall_mode = !recall_mode;
-        bank_open();
+        if (tr_view == V_COPY) { do_copy(); dirty = 1; t_change = fm1_ms; tr_t0 = fm1_ms; }
+        else { save_mode = 0; recall_mode = !recall_mode; bank_open(); }
     }
     if (rel & (1u << BTN_SAVE)) {
-        if (save_down && !save_long) {
+        if (save_down && !save_long && tr_view != V_COPY) {
             if (save_mode) save_mode = 0;
             else if (!recall_mode) { save_mode = 1; bank_open(); }
         }
@@ -2091,29 +2626,52 @@ static void app_step(void)                      /* one pass of the main loop (a 
     e4 = fm1_enc_take(ENC_KNOB3);
     e5 = fm1_enc_take(ENC_KNOB4);
     e6 = fm1_enc_take(ENC_PRESETS);
-    if (e0) { menu_pg = (uint8_t)clampi((int32_t)menu_pg + (e0 > 0 ? 1 : -1), 0, 3); tr_view = menu_pg ? (uint8_t)(V_SCALE + menu_pg - 1u) : 0; tr_t0 = fm1_ms; }
-    if (e1) { cell_t ab = {K_AB, 0}; cell_adj(ab, knob_delta(1, e1)); cell_overlay(ab); dirty = 1; t_change = fm1_ms; }      /* the A-to-B crossfade, on every screen */
+    if (b | rel | down | up | (uint32_t)(e0 | e1 | e2 | e3 | e4 | e5 | e6)) pg_t0 = fm1_ms;      /* a touch: the page stays another 10 s */
+    if (e0) {
+        int32_t n = e0 < 0 ? -e0 : e0, dir = e0 > 0 ? 1 : -1;                    /* (a fast turn can be a few detents) */
+        if (n > 8) n = 8;
+        if (cur_half >= 0) { while (n--) cur_half = half_step(cur_half, dir); page_auto = 0; }        /* SELECT goes through the pages of the group */
+        else { menu_pg = (uint8_t)clampi((int32_t)menu_pg + dir * n, 0, 5); tr_view = menu_pg ? (uint8_t)(V_SCALE + menu_pg - 1u) : 0; tr_t0 = fm1_ms; }   /* at home: the menus */
+    }
+    if (e1) { cell_t ab = {K_AB, 0}; cell_adj(ab, knob_delta(1, e1)); cell_overlay(ab); help_set(ab); dirty = 1; t_change = fm1_ms; }      /* the A-to-B crossfade, on every screen */
     if (e6) {
         cell_t ins = {K_INST, 0};
         ins.arg = edit_sc;
         cell_adj(ins, e6);
         cell_overlay(ins);
+        help_set(ins);
         dirty = 1; t_change = fm1_ms;
     }
     if (e2 | e3 | e4 | e5) {
         int32_t ev[4], i;
         ev[0] = e2; ev[1] = e3; ev[2] = e4; ev[3] = e5;
         if (tr_view) {                                                          /* the menus */
+            int32_t dr[4];
+            for (i = 0; i < 4; i++) dr[i] = ev[i] > 0 ? 1 : -1;
             tr_t0 = fm1_ms;
             if (tr_view == V_SCALE) {
-                if (e2) cur.root = (uint8_t)clampi((int32_t)cur.root + (e2 > 0 ? 1 : -1), 0, 11);
-                if (e3) cur.scale = (uint8_t)clampi((int32_t)cur.scale + (e3 > 0 ? 1 : -1), 0, 9);
+                if (e2) cur.root = (uint8_t)clampi((int32_t)cur.root + dr[0], 0, 11);
+                if (e3) cur.scale = (uint8_t)clampi((int32_t)cur.scale + dr[1], 0, 9);
             } else if (tr_view == V_COPY) {
-                if (e2) copy_act = (uint8_t)clampi((int32_t)copy_act + (e2 > 0 ? 1 : -1), 0, 3);
+                if (e2) copy_act = (uint8_t)clampi((int32_t)copy_act + dr[0], 0, 5);
+                if (e3 && copy_act == 4u) copy_slot = (uint8_t)clampi((int32_t)copy_slot + dr[1], 0, 15);
+            } else if (tr_view == V_CHAIN) {
+                uint8_t *c = &chain[chain_sel % CHAIN_N];
+                if (e2) chain_sel = (uint8_t)clampi((int32_t)chain_sel + dr[0], 0, CHAIN_N - 1);
+                c = &chain[chain_sel % CHAIN_N];
+                if (e3) {
+                    int32_t sl = (*c & 0x80u) ? (int32_t)(*c & 15u) + dr[1] : (dr[1] > 0 ? 0 : -1);     /* an empty step: turn right for slot 1; turn left past slot 1: empty again */
+                    *c = sl < 0 ? (uint8_t)(*c & 0x70u) : (uint8_t)(0x80u | (*c & 0x70u) | (uint32_t)clampi(sl, 0, 15));
+                }
+                if (e4) { int32_t code = clampi((int32_t)((*c >> 4) & 7u) + dr[2], 0, 4); *c = (uint8_t)((*c & 0x8Fu) | ((uint32_t)code << 4)); }
+                if (e5) { chain_on = dr[3] > 0 ? 1u : 0u; chain_pos = 255; chain_left = 0; }
+            } else if (tr_view == V_SYS2) {
+                if (e2) fxs.hint = dr[0] > 0 ? 1u : 0u;
+                if (e3) fxs.recm = dr[1] > 0 ? 1u : 0u;
             } else {
-                if (e2) { theme_set((uint32_t)((int32_t)glob.theme + (int32_t)NTHEME + (e2 > 0 ? 1 : -1)) % NTHEME); view_drawn = 255; }
-                if (e3) glob.ch[0] = (uint8_t)clampi((int32_t)glob.ch[0] + (e3 > 0 ? 1 : -1), 0, 15);
-                if (e4) glob.ch[1] = (uint8_t)clampi((int32_t)glob.ch[1] + (e4 > 0 ? 1 : -1), 0, 15);
+                if (e2) { theme_set((uint32_t)((int32_t)glob.theme + (int32_t)NTHEME + dr[0]) % NTHEME); view_drawn = 255; }
+                if (e3) glob.ch[0] = (uint8_t)clampi((int32_t)glob.ch[0] + dr[1], 0, 15);
+                if (e4) glob.ch[1] = (uint8_t)clampi((int32_t)glob.ch[1] + dr[2], 0, 15);
                 if (e5) bt_set(e5 > 0 ? 1u : 0u);                  /* turn right: ON, left: OFF */
             }
         } else {
@@ -2125,7 +2683,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
             h = &HALF[cur_half];
             for (i = 0; i < 4; i++) {
                 cell_t c = h->c[i];
-                if (!ev[i] || c.kind == K_NONE) continue;
+                if (!ev[i] || c.kind == K_NONE || c.kind == K_WAVE) continue;
                 if (step_edit && i == 0) {
                     uint32_t first = 8;
                     for (kk = 0; kk < 8u; kk++)
@@ -2133,8 +2691,8 @@ static void app_step(void)                      /* one pass of the main loop (a 
                     hud_pct("STEP LEVEL", cur.sc[edit_sc].fader[first & 7u]);
                     hud_scn = (uint8_t)(edit_sc + 1u);
                 } else {
-                    cell_adj(c, c.kind == K_P || c.kind == K_DENS || c.kind == K_SWING || c.kind == K_LDEP || c.kind == K_TIMB || c.kind == K_DLY || c.kind == K_LVL || c.kind == K_BPM ||
-                                (c.kind >= K_RVA && c.kind <= K_RVT) || c.kind == K_DFB || c.kind == K_DTN || c.kind == K_PANA || c.kind == K_PANB ? knob_delta((uint32_t)(2 + i), ev[i]) : ev[i]);
+                    cell_adj(c, cell_fast(c.kind) ? knob_delta((uint32_t)(2 + i), ev[i]) : ev[i]);
+                    help_set(c);
                     if (cur_half < 0) cell_overlay(c);                                      /* (a page shows its values itself) */
                 }
             }
@@ -2153,17 +2711,22 @@ static void app_step(void)                      /* one pass of the main loop (a 
     /* --- bookkeeping: the screens that leave by themselves, the sound's settings, the screen */
     if (tr_view && fm1_ms - tr_t0 > 2500u) { tr_view = 0; menu_pg = 0; }
     if (page_auto && fm1_ms - pg_t0 > 1800u) { page_auto = 0; if (cur_half == 1) cur_half = -1; }   /* the page a knob opened closes by itself */
+    if (cur_half >= 0 && !page_auto && fm1_ms - pg_t0 > 10000u) cur_half = -1;                      /* a page you have left alone for 10 s: back to the performance screen */
+    if (!(cur_half >= 0 && HALF[cur_half].group == G_FX)) pi_mask = 0;                              /* the punch-ins are only on the FX pages */
+    pi_voice = (uint8_t)half_voice(cur_half);
+    if (rec_done) { rec_done = 0; hud("CAPTURED", fxs.recm ? "NOTES + MOTION" : "NOTES", -1); flash(BTN_REC, 3); dirty = 1; t_change = fm1_ms; }
     { static uint32_t t_dsp; if (fm1_ms - t_dsp >= 500u) { uint32_t m = dsp_max; dsp_max = 0; t_dsp = fm1_ms; dsp_pct = m / 1392u; } }   /* % of one 5.8 ms block = 139200 ticks; under 50 is comfortable (docs/RULES.md) */
     weights();
-    { uint32_t bpm = bpm_get(&cur); wob_inc = bpm * 3246u; dly_len = (int32_t)clampi((int32_t)(DT_K[fxs.dtime & 3u] / bpm), 1000, 65000); }
+    wob_inc = bpm_get(&cur) * 3246u;
     select_view();
     if (fm1_ms - t_ui >= 12u) { t_ui = fm1_ms; leds(lit); }
     draw_tick();
 
     if (bt_kept(sv.bt)) { dirty = 1; t_change = fm1_ms; }                       /* the radio's address and trims copy: saved with the settings */
     if (dirty && !busy && fm1_ms - t_change > 2000u) {                          /* save when silent: an erase stalls the sound */
-        sv.s.cur = cur; sv.s.ver = 1; sv.s.theme = glob.theme; sv.s.ch0 = glob.ch[0]; sv.s.ch1 = glob.ch[1]; sv.s.slot = glob.slot;
+        sv.cur = cur; sv.ver = 1; sv.theme = glob.theme; sv.ch0 = glob.ch[0]; sv.ch1 = glob.ch[1]; sv.slot = glob.slot;
         fx_save(sv.fx);
+        memcpy(sv.chain, chain, CHAIN_N);
         settings_save(&sv, sizeof sv);
         dirty = 0;
     }
