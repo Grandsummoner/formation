@@ -59,12 +59,12 @@ int main(void)
         for (k = 0; k < 16u; k++) { memset(&src[k], 0, sizeof src[k]); src[k].density = (uint8_t)(10 + k); src[k].sc[1].level = (uint8_t)(100 + k); src[k].used = 1; src[k].rv[0] = (uint8_t)(1 + k); src[k].rv[2] = 77; }
         bank.magic = PRE_MAGIC2;
         memcpy((uint8_t *)&bank + 8, src, sizeof src);
-        bank_conv16();
+        bank_conv(1);
         for (k = 0; k < 16u; k++)
             if (bank.p[k].density != 10 + k || bank.p[k].sc[1].level != 100 + k || !(bank.p[k].used & 1u) || bank.p[k].sc[0].rsend != 1 + k || bank.p[k].sc[0].rsize != 77) break;
         CHECK(k == 16u && bank.magic == PRE_MAGIC, "a PNV2 bank: all sixteen slots converted in place");
         CHECK(sizeof(prebank_t) <= 4096u, "the new bank fits its flash sector");
-        CHECK(sizeof(saved5_t) <= 512u, "the settings record fits the settings sector's buffer");
+        CHECK(sizeof(saved6_t) <= 512u, "the settings record fits the settings sector's buffer");
     }
     {                                                                           /* the working state of v1.6 in the settings: app_init reads it */
         saved4_t o4;

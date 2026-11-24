@@ -1,0 +1,29 @@
+# Formation host test, v1.8: how it looks. a chord on, playing; then other instruments and morph positions; the themes
+1000 keys 0x91
+1100 btn 12
+1120 btnup 12
+2500 shot
+3000 enc 6 3
+3500 shot
+4000 enc 1 120
+4500 shot
+5000 enc 6 6
+5500 shot
+6000 enc 1 120
+6500 shot
+7000 btn 2
+7020 btnup 2
+7500 shot
+7700 btn 8
+7720 btnup 8
+8000 btn 7
+8020 btnup 7
+8300 enc 5 1
+8800 shot
+9000 enc 5 1
+9500 shot
+9700 enc 5 1
+10200 shot
+10400 enc 5 1
+10900 shot
+11000 end
