@@ -64,7 +64,17 @@ typedef struct {
     uint8_t morph_pos, density, swing, bpm, div, scale, root, poly, mode;
     int8_t oct, tr;
     uint8_t used, rsv[4];
-} preset_t;                                     /* 102 B */
+} preset17_t;                                   /* v1.7: 106 B (read, then converted: preset_t starts with the same bytes) */
+typedef struct {
+    scene_t sc[2];
+    uint8_t lfo_rate[6], lfo_depth[6];
+    uint8_t lfo_sp[6];                          /* each LFO's shape (bits 0..2) and phase (bits 3..7, in 32nds of a cycle) */
+    uint8_t morph_pos, density, swing, bpm, div, scale, root, poly, mode;
+    int8_t oct, tr;
+    uint8_t used, rsv[4];
+    uint8_t dr_on, dr_level, dr_tone, dr_decay, dr_tune, dr_send, dr_follow;      /* the drum voice: on, level, tone, decay, tune (128 plus the semitones, -12 .. +12), reverb send, kick follows the melody */
+    uint8_t dr_shadow[2], dr_space[2];          /* how closely it shadows the melody, how much room it leaves: one of each for each scene (the morph blends them) */
+} preset_t;                                     /* 117 B */
 /* the presets and the settings of v1.0 .. v1.6 (a scene 26 B, a preset 80 B, one reverb for both scenes, one delay): read, then converted */
 typedef struct { uint8_t fader[8], p[6], inst, timbre, dsend, level, seq[8]; } scene16_t;
 typedef struct {
@@ -80,18 +90,18 @@ enum { INST_MIDI = 0, INST_ANALOG, INST_FM, INST_SAW, INST_PULSE, INST_EPIANO, I
        INST_CS80, INST_DXBASS, INST_CLAV, INST_VIBES, INST_PWMPAD, INST_BREATH, INST_HOOVER, INST_WOBBLE, NINST };
 
 /* what is not in a preset: the MIDI sync out, the clock, the look, the pans, the beginner text, what REC keeps */
-static struct { uint8_t sync, chord, voic, amode, abars, ashp, csrc, cmode, meter, ccin, pcin, pana, panb, hint, recm; } fxs =
-    {2, 0, 0, 0, 2, 0, 0, 1, 1, 1, 1, 128, 128, 0, 0};   /* csrc: the clock: 0 internal, 1 external, 2 auto */
+static struct { uint8_t sync, chord, voic, amode, abars, ashp, csrc, cmode, meter, ccin, pcin, pana, panb, hint, recm, idle; } fxs =
+    {2, 0, 0, 0, 2, 0, 0, 1, 1, 1, 1, 128, 128, 0, 0, 2};   /* csrc: the clock: 0 internal, 1 external, 2 auto */
 /* sync: SYNC OUT 0 off, 1 start/stop, 2 + clock; chord, voic: the chord type and its voicing;
  * amode, abars, ashp: AUTO A-B (off / once / ping-pong / saw; 2^abars bars a trip; linear / ease); csrc: the clock (internal / external / auto);
  * cmode: the colours (0 SOFT, 1 RICH, 2 WILD); meter: the level meter on the performance screen; ccin, pcin: MIDI control change and program change in;
  * pana, panb: where each scene sits in the stereo field (128 = middle); hint: the beginner text (a note for each knob you touch);
- * recm: what REC captures (0 the notes, 1 the notes and the parameters' motion) */
+ * recm: what REC captures (0 the notes, 1 the notes and the parameters' motion); idle: the screen that forms by itself after a while untouched (0 off, 1 30 s, 2 1 min, 3 3 min) */
 static uint8_t leg_dly[3] = {2, 100, 255};     /* the delay of a v1.0 .. v1.6 record (time, feedback, tone): the presets of that time take it */
 static const uint32_t DT_K[4] = {661500u, 1323000u, 1984500u, 2646000u};   /* 44100 * 60 * (1/4 1/2 3/4 1 beat): the delay in samples = K / bpm */
 
 static preset_t cur;                            /* the state you play */
-static struct { uint8_t ver, theme, ch[2], slot; } glob = {1, 0, {0, 1}, 0};
+static struct { uint8_t ver, theme, ch[3], slot; } glob = {1, 0, {0, 1, 9}, 0};      /* ch: MIDI out of A, of B, of the drums (channel 10) */
 
 static void scene_init(scene_t *s, int b)
 {
@@ -132,6 +142,14 @@ static void preset_init(preset_t *p)
     scene_init(&p->sc[0], 0);
     scene_init(&p->sc[1], 1);
     p->density = 128; bpm_set(p, 80); p->div = 2; p->scale = 1; p->root = 0; p->mode = MODE_ARP;
+    p->dr_on = 1; p->dr_level = 150; p->dr_tone = 110; p->dr_decay = 110; p->dr_tune = 128; p->dr_send = 40; p->dr_follow = 1;
+    p->dr_shadow[0] = p->dr_shadow[1] = 140; p->dr_space[0] = p->dr_space[1] = 150;
+}
+static void preset_from17(preset_t *d, const preset17_t *o)     /* a v1.7 preset: the same bytes, then the drums (off: it sounds as it did) */
+{
+    preset_init(d);
+    memcpy(d, o, sizeof *o);
+    d->dr_on = 0;
 }
 static void preset_from16(preset_t *d, const preset16_t *o)     /* a preset of v1.0 .. v1.6 in the new layout */
 {
@@ -149,6 +167,7 @@ static void preset_from16(preset_t *d, const preset16_t *o)     /* a preset of v
     memcpy(d->lfo_rate, o->lfo_rate, sizeof d->lfo_rate); memcpy(d->lfo_depth, o->lfo_depth, sizeof d->lfo_depth);
     d->morph_pos = o->morph_pos; d->density = o->density; d->swing = o->swing; d->bpm = o->bpm; d->div = o->div; d->scale = o->scale;
     d->root = o->root; d->poly = o->poly; d->mode = o->mode; d->oct = o->oct; d->tr = o->tr; d->used = o->used;
+    d->dr_on = 0;                                                               /* (a preset of that time sounds as it did) */
 }
 
 /* ================================================================== 2. the sound (audio ISR) */
@@ -481,6 +500,72 @@ static void reverb(uint32_t vc, int32_t x, int32_t g, int32_t k, int32_t *l, int
     *r = (t[1] + t[3]) >> 1;
 }
 
+/* ---- the drum voice (v1.8): a gentle kit of six, synthesised: a tuned KICK and TOM (a sine with a short pitch drop), a soft BRUSH snare (band-passed noise and a quiet
+ * body), a RIM click (two sines), a closed HAT and an OPEN hat (high-passed noise, soft). The main loop fires them (drum_hit); the ISR renders them, mixes them to the
+ * middle and ducks them under the melody, so that they can never be louder than it. */
+#define NDR 6
+enum { DR_KICK, DR_TOM, DR_BRUSH, DR_RIM, DR_HAT, DR_OPEN };
+static const uint8_t DR_GM[NDR] = {36, 45, 38, 37, 42, 46};                    /* the MIDI notes they send (General MIDI) */
+static const char *const DR_NAME[NDR] = {"KICK", "TOM", "BRUSH", "RIM", "HAT", "OPEN"};
+typedef struct {
+    volatile uint32_t serial, inc, drop, lvl, ash, psh;                         /* the main loop: pitch step, pitch drop (the rim's second pitch), level, decay and pitch-drop shifts */
+    uint32_t seen, ph, ph2, amp, penv;                                          /* the ISR: phases, the amplitude (Q24), the pitch envelope */
+    int32_t lp, lp2;
+} drm_t;
+static drm_t drm[NDR];
+static volatile int32_t dr_gain, dr_send;
+static uint32_t dn_s = 0x2545F491u, dr_act;
+static int32_t mel_env;                                                         /* the melody's level, followed (the drums duck under it) */
+#define DK_SHIFT 4                                                              /* the follower, shifted down, is how far the drums duck (of 256) ... */
+#define DK_MAX 200                                                              /* ... at most this far: they never go quite away */
+#define DR_CAP 100                                                              /* the drum level knob at its top is this much of 256 (and the drums are rendered 8 times quieter first): a kit at full level is about 0.6 of one note of a voice */
+
+static int32_t dr_noise(void)
+{
+    dn_s ^= dn_s << 13; dn_s ^= dn_s >> 17; dn_s ^= dn_s << 5;
+    return (int32_t)(dn_s >> 16) - 32768;
+}
+static void render_drums(int32_t *out, uint32_t n)                              /* out must be zero; the drums are added, mono */
+{
+    uint32_t d, i, act = 0;
+    for (d = 0; d < NDR; d++) {
+        drm_t *s = &drm[d];
+        uint32_t ser = s->serial;
+        if (ser != s->seen) { s->seen = ser; s->amp = s->lvl; s->penv = 65535u; s->ph = s->ph2 = 0; s->lp = s->lp2 = 0; }
+        if (s->amp < 4096u) continue;
+        act = 1;
+        for (i = 0; i < n; i++) {
+            int32_t o, a = (int32_t)(s->amp >> 9), nz;
+            switch (d) {
+            case DR_KICK: case DR_TOM:
+                s->ph += s->inc + ((s->drop >> 10) * (s->penv >> 6));          /* (drop x penv / 65536, without a 32-bit overflow) */
+                s->penv -= s->penv >> s->psh;
+                o = (sine(s->ph) * a) >> 15;
+                break;
+            case DR_BRUSH:
+                nz = dr_noise();
+                s->lp += (nz - s->lp) >> 2;
+                s->lp2 += (s->lp - s->lp2) >> 4;
+                s->ph += s->inc;
+                o = ((((s->lp - s->lp2) << 1) + (sine(s->ph) >> 2)) * a) >> 15;
+                break;
+            case DR_RIM:
+                s->ph += s->inc; s->ph2 += s->drop;
+                o = (((sine(s->ph) + sine(s->ph2)) >> 1) * a) >> 15;
+                break;
+            default:                                                            /* HAT, OPEN */
+                nz = dr_noise();
+                s->lp += (nz - s->lp) >> s->psh;
+                o = ((nz - s->lp) * a) >> 15;
+                break;
+            }
+            s->amp -= s->amp >> s->ash;
+            out[i] += o >> 3;
+        }
+    }
+    dr_act = act;
+}
+
 static void app_audio(int32_t *out, uint32_t n)
 {
     uint32_t v, i, any[2] = {0, 0}, t0 = fm1_ticks(), run[2], c;
@@ -488,8 +573,12 @@ static void app_audio(int32_t *out, uint32_t n)
             dk[2] = {dly_k_v[0], dly_k_v[1]}, rs[2] = {rv_s[0], rv_s[1]}, rg[2] = {rv_g[0], rv_g[1]}, rk[2] = {rv_k[0], rv_k[1]},
             pl[2] = {pan_l[0], pan_l[1]}, pr[2] = {pan_r[0], pan_r[1]};
     uint32_t ml = 0, mr = 0;
+    int32_t dgain = dr_gain, dsnd = dr_send, menv = mel_env;
+    static int32_t bufd[HALF_FRAMES];
     memset(bufa, 0, sizeof bufa);
     memset(bufb, 0, sizeof bufb);
+    memset(bufd, 0, sizeof bufd);
+    render_drums(bufd, n);
     for (v = 0; v < NSL; v++) {
         render_slot(&sl[v], v < 4u ? bufa : bufb, n);
         any[v >> 2] |= sl[v].st;
@@ -497,14 +586,19 @@ static void app_audio(int32_t *out, uint32_t n)
     busy = (uint8_t)((any[0] | any[1]) != 0u);
     for (c = 0; c < 2u; c++) {
         run[c] = rv_run[c];
-        if (rs[c] && any[c]) run[c] = 700u;                                 /* the tail goes on for about four seconds */
+        if ((rs[c] && any[c]) || (dr_act && dsnd)) run[c] = 700u;           /* the tail goes on for about four seconds */
         else if (run[c]) run[c]--;
         rv_run[c] = run[c];
     }
     for (i = 0; i < n; i++) {
-        int32_t x[2], sl_ = 0, sr_ = 0, rl = 0, rr_ = 0, ol, or_;
+        int32_t x[2], sl_ = 0, sr_ = 0, rl = 0, rr_ = 0, ol, or_, ax, dm, dg;
         x[0] = (bufa[i] * gv[0]) >> 7;
         x[1] = (bufb[i] * gv[1]) >> 7;
+        ax = (x[0] < 0 ? -x[0] : x[0]) + (x[1] < 0 ? -x[1] : x[1]);
+        if (ax > menv) menv += (ax - menv) >> 2; else menv -= menv >> 11;     /* the melody's level: quick up, about 50 ms down */
+        dg = 256 - clampi(menv >> DK_SHIFT, 0, DK_MAX);
+        dm = (((bufd[i] * dgain) >> 8) * dg) >> 8;                              /* the drums: their level, ducked under the melody */
+        sl_ += dm; sr_ += dm;
         for (c = 0; c < 2u; c++) {
             int32_t dl, in, a, b;
             dl = dly[c][(dly_w - (uint32_t)len[c]) & (DLN - 1u)];
@@ -518,7 +612,7 @@ static void app_audio(int32_t *out, uint32_t n)
             sr_ += b + ((dl * pr[c]) >> 9);
             if (run[c]) {
                 int32_t ql, qr;
-                reverb(c, (x[c] * rs[c]) >> 8, rg[c], rk[c], &ql, &qr);
+                reverb(c, ((x[c] * rs[c]) >> 8) + ((dm * dsnd) >> 9), rg[c], rk[c], &ql, &qr);
                 rl += ql; rr_ += qr;
             }
         }
@@ -529,6 +623,7 @@ static void app_audio(int32_t *out, uint32_t n)
         if ((uint32_t)(ol < 0 ? -ol : ol) > ml) ml = (uint32_t)(ol < 0 ? -ol : ol);
         if ((uint32_t)(or_ < 0 ? -or_ : or_) > mr) mr = (uint32_t)(or_ < 0 ? -or_ : or_);
     }
+    mel_env = menv;
     if (ml > meter_l) meter_l = ml;
     if (mr > meter_r) meter_r = mr;
     t0 = fm1_ticks() - t0;
@@ -596,6 +691,8 @@ static void weights(void)
         pan_r[sc] = clampi(pn < 128 ? pn * 2 : 255, 0, 255);
         for (j = 0; j < 4u; j++) slot_env(sc, &sl[sc * 4u + j]);
     }
+    dr_gain = (cur.dr_on && (int32_t)(kill_until - fm1_ms) <= 0) ? ((int32_t)cur.dr_level * DR_CAP) >> 8 : 0;     /* (PANIC shuts them too) */
+    dr_send = cur.dr_send;
 }
 
 static void voice_on(uint32_t sc, uint32_t note)
@@ -630,7 +727,7 @@ static poff_t poff[32];
 static void send_off(uint32_t sc, uint32_t note)
 {
     midi_send(0x80u | glob.ch[sc], note, 0);
-    voice_off(sc, note);
+    if (sc < 2u) voice_off(sc, note);                                           /* (2 is the drums: nothing sounds on after the note) */
 }
 static void note_on(uint32_t sc, uint32_t note, uint32_t gate_ticks)
 {
@@ -658,6 +755,52 @@ static void offs_run(uint32_t now, int force)
         }
 }
 
+static uint32_t dr_hits[NDR], dr_last[NDR], dr_vmax;     /* (how many, the last pitch and the loudest hit: the tests look at them) */
+static uint32_t step_ticks(void);
+static void drum_hit(uint32_t lane, uint32_t vel, uint32_t note)   /* vel 1..127; note: the pitch of a KICK or TOM (MIDI), the others ignore it */
+{
+    drm_t *d = &drm[lane % NDR];
+    uint32_t dec = cur.dr_decay, tone = cur.dr_tone, inc, i;
+    int32_t tune = clampi((int32_t)cur.dr_tune - 128, -12, 12), nt;
+    if (vel > 127u) vel = 127u;
+    if (!vel) return;
+    switch (lane) {
+    case DR_KICK:
+        nt = clampi((int32_t)note + tune, 24, 72);
+        inc = INC_C9[nt % 12] >> (10u - (uint32_t)nt / 12u);
+        d->inc = inc; d->drop = inc * 2u; d->psh = 8; d->ash = 10u + (dec >> 6);
+        break;
+    case DR_TOM:
+        nt = clampi((int32_t)note + tune, 36, 84);
+        inc = INC_C9[nt % 12] >> (10u - (uint32_t)nt / 12u);
+        d->inc = inc; d->drop = inc / 2u; d->psh = 9; d->ash = 10u + (dec >> 6);
+        break;
+    case DR_BRUSH:
+        d->inc = INC_C9[7] >> 6; d->ash = 10u + (dec >> 7);
+        break;
+    case DR_RIM:
+        inc = INC_C9[7] >> 4; d->inc = inc; d->drop = inc * 27u / 10u; d->ash = 8;
+        break;
+    case DR_HAT:
+        d->psh = tone > 170u ? 1u : tone > 85u ? 2u : 3u; d->ash = 8u + (dec >> 7);
+        break;
+    default:                                                                    /* OPEN */
+        d->psh = tone > 170u ? 1u : tone > 85u ? 2u : 3u; d->ash = 11u + (dec >> 7);
+        break;
+    }
+    d->lvl = vel * 131072u;
+    d->serial++;
+    dr_hits[lane % NDR]++; dr_last[lane % NDR] = note;
+    if (vel > dr_vmax) dr_vmax = vel;
+    midi_send(0x90u | glob.ch[2], DR_GM[lane % NDR], vel);
+    for (i = 0; i < 32u; i++)
+        if (!poff[i].on) {
+            poff[i].on = 1; poff[i].note = DR_GM[lane % NDR]; poff[i].sc = 2;
+            poff[i].due = fm1_ticks() + step_ticks() / 4u;
+            break;
+        }
+}
+
 /* ================================================================== 4. the engine */
 static void recall_apply(int32_t slot);
 static void roll(void);
@@ -669,6 +812,7 @@ static uint8_t mute_mask;
 static int32_t pend_slot = -1;
 static uint8_t eff[6];                          /* the six parameters now: morphed between the scenes, plus the LFOs */
 static uint32_t lfo_ph[6], next_t, last_t, step_hit, clk_next;
+static uint8_t ds_sounded, ds_raw;              /* what the melody did on the step just decided (the drums follow it) */
 static int32_t lfo_out[6], lfo_held[6];         /* each LFO's value now (-32767 .. 32767; 0 when it is off), and what RANDOM holds */
 static int32_t auto_ph, auto_last = -1;       /* AUTO A-B: the position of the trip (0 = A .. 65535 = B), and the morph value it wrote last */
 static int8_t auto_dir = 1;
@@ -832,6 +976,7 @@ static void do_step_inner(void)
     else if (e < -13 && e >= -64) ls = (ls + 7u) & 7u;
     else ls = rnd8() < 51u ? (ls + 2u) & 7u : (ls + 1u) & 7u;
     cstep = (uint8_t)ls;
+    ds_sounded = 0;
     if (rec_state == 1u && ls == 0u) { rec_state = 2; rec_cnt = 0; rec_gate = 0; }  /* REC was armed: the capture starts with this measure */
     if (rec_state == 2u) {
         rec_cnt++;
@@ -877,15 +1022,60 @@ static void do_step_inner(void)
         pitch = clampi(pitch, 0, 127);
         for (i = 0; i < 2u; i++) note_on(i, (uint32_t)pitch, gate_t);
     }
+    ds_sounded = 1; ds_raw = (uint8_t)raw;
     hit_ticks = fm1_ticks();
     hit_n++;                                    /* (the globe flashes on it) */
     step_hit = ls;
     trail[ls] = 255;
     if (rec_state == 2u) { rec_note[ls] = (uint8_t)raw; rec_gate |= (uint8_t)(1u << ls); }     /* REC keeps the note */
 }
+/* ---- the drums follow the melody. After each step they look at what it did: the pitch, the leap from the one before, whether it rested. SHADOW (per scene, blended
+ * by the morph) is how much they answer its events (a soft brush on a falling leap, a tuned tom on a rising one, a rim in a gap just after a note, an open hat after
+ * a big jump); SPACE is how much room they leave: the busier the melody, the fewer the hits, and with a lot of SPACE they play almost only in its gaps. The kick is the
+ * anchor on the first and the middle of the measure, tuned to the key (the tonic; the fifth on the middle when the melody has left the tonic chord, with FOLLOW). */
+static uint8_t dm_prev, dm_have, dm_act, dm_gap;
+static uint32_t blend255(uint32_t a, uint32_t b, uint32_t m) { return (a * (255u - m) + b * m + 127u) / 255u; }
+static int in_triad(uint32_t note)              /* the note is the tonic, third or fifth of the key (in any octave) */
+{
+    uint32_t pc = (note + 120u - (uint32_t)cur.root) % 12u;
+    return pc == 0u || pc == 3u || pc == 4u || pc == 7u;
+}
+static uint32_t dvel(uint32_t base, uint32_t extra) { uint32_t v = base + (rnd8() & 15u) + extra; return v > 100u ? 100u : v; }
+static void drum_step(void)
+{
+    uint32_t ls = cstep, shadow, space, room, interval = 0, p, up = 0;
+    if (!cur.dr_on) { if (ds_sounded) { dm_prev = ds_raw; dm_have = 1; } return; }
+    shadow = blend255(cur.dr_shadow[0], cur.dr_shadow[1], cur.morph_pos);
+    space = blend255(cur.dr_space[0], cur.dr_space[1], cur.morph_pos);
+    dm_act = (uint8_t)((dm_act * 3u + (ds_sounded ? 255u : 0u)) / 4u);          /* how busy the melody is */
+    if (ds_sounded) {
+        if (dm_have) { interval = ds_raw > dm_prev ? ds_raw - dm_prev : dm_prev - ds_raw; up = ds_raw > dm_prev; }
+        dm_gap = 0;
+    } else if (dm_gap < 255u) dm_gap++;
+    room = 255u - ((uint32_t)dm_act * space >> 8);                               /* how much room the melody leaves them */
+    if (ls == 0u || ls == 4u) {                                                  /* the kick: suppressed the least */
+        p = (ls == 0u ? 215u : 120u) * (128u + room / 2u) / 255u;
+        if (rnd8() < p) {
+            uint32_t k = 36u + cur.root;
+            if (ls == 4u && cur.dr_follow && dm_have && !in_triad(dm_prev)) k += 7u;
+            drum_hit(DR_KICK, ls == 0u ? dvel(60, 14) : dvel(46, 10), k);
+        }
+    }
+    if ((ls == 2u || ls == 6u) && rnd8() < 150u * room / 255u) drum_hit(DR_BRUSH, dvel(40, 8), 0);                          /* the soft backbeat */
+    if (ds_sounded && interval >= 5u) {
+        if (!up && rnd8() < (shadow * room / 255u) / 2u) drum_hit(DR_BRUSH, dvel(44, interval > 12u ? 24u : interval * 2u), 0);   /* a falling leap: a brush */
+        if (up && rnd8() < (shadow * 3u / 4u) * (128u + room / 2u) / 255u)                                                  /* a rising leap: a tom, the note an octave down */
+            drum_hit(DR_TOM, dvel(44, interval > 12u ? 24u : interval * 2u), (uint32_t)clampi((int32_t)ds_raw - 12, 36, 72));
+    }
+    if (!ds_sounded && dm_gap == 1u && rnd8() < (shadow * room / 255u) * 2u / 3u) drum_hit(DR_RIM, dvel(36, 0), 0);           /* the answer in the gap */
+    if (!ds_sounded ? rnd8() < 150u * room / 255u : ((ls & 1u) && rnd8() < 70u * room / 255u)) drum_hit(DR_HAT, dvel(30, 0), 0);
+    if ((!ds_sounded && ls == 7u && rnd8() < 110u * room / 255u) || (ds_sounded && interval >= 12u && rnd8() < shadow / 2u)) drum_hit(DR_OPEN, dvel(32, 0), 0);
+    if (ds_sounded) { dm_prev = ds_raw; dm_have = 1; }
+}
 static void do_step(void)
 {
     do_step_inner();
+    drum_step();
     if (rec_state == 2u && rec_cnt >= 8u) rec_finish();                              /* eight steps are in */
 }
 
@@ -1058,22 +1248,30 @@ static void key_note(uint32_t note, int down)   /* a key (or MIDI in) goes down 
 }
 
 /* ================================================================== 5. storage */
-#define PRE_MAGIC 0x33564E50u                   /* "PNV3" */
+#define PRE_MAGIC 0x34564E50u                   /* "PNV4" */
+#define PRE_MAGIC3 0x33564E50u                  /* "PNV3": v1.7, 16 presets of 106 B after the 8-byte header */
 #define PRE_MAGIC2 0x32564E50u                  /* "PNV2": v1.0 .. v1.6, 16 presets of 80 B after the 8-byte header */
 #define PRE16_BYTES (16u * sizeof(preset16_t))
+#define PRE17_BYTES (16u * sizeof(preset17_t))
 typedef struct { uint32_t magic, crc; preset_t p[16]; } prebank_t;
 static prebank_t bank;
 static uint8_t bank_ok;
 
-static void bank_conv16(void)                   /* bank holds a PNV2 bank: rewrite it in the new layout, last slot first (a new slot is longer, so it never lands on one not yet read) */
+static void bank_conv(int from16)               /* bank holds an older bank (PNV2 or PNV3): rewrite it in the new layout, last slot first (a new slot is longer, so it never lands on one not yet read) */
 {
     const uint8_t *raw = (const uint8_t *)&bank;
     int32_t i;
     for (i = 15; i >= 0; i--) {
-        preset16_t o;
         preset_t n;
-        memcpy(&o, raw + 8u + (uint32_t)i * sizeof o, sizeof o);
-        preset_from16(&n, &o);
+        if (from16) {
+            preset16_t o;
+            memcpy(&o, raw + 8u + (uint32_t)i * sizeof o, sizeof o);
+            preset_from16(&n, &o);
+        } else {
+            preset17_t o;
+            memcpy(&o, raw + 8u + (uint32_t)i * sizeof o, sizeof o);
+            preset_from17(&n, &o);
+        }
         memcpy(&bank.p[i], &n, sizeof n);
     }
     bank.magic = PRE_MAGIC;
@@ -1084,14 +1282,15 @@ static int bank_load(void)
 #ifdef DINGHY_HOST
     if (!host_pre_ok) return -1;
     memcpy(&bank, host_pre, sizeof bank);
-    if (bank.magic == PRE_MAGIC2) { bank_conv16(); return 0; }
+    if (bank.magic == PRE_MAGIC2) { bank_conv(1); return 0; }
+    if (bank.magic == PRE_MAGIC3) { bank_conv(0); return 0; }
     return bank.magic == PRE_MAGIC ? 0 : -1;
 #else
     if (!flash_ok || st_read(PRESETS_AT, &bank, 8u)) return -1;
-    if (bank.magic == PRE_MAGIC2) {             /* the old layout: read it, check it, convert it */
-        uint32_t crc = bank.crc;
-        if (st_read(PRESETS_AT, &bank, 8u + PRE16_BYTES) || crc32((const uint8_t *)&bank + 8u, PRE16_BYTES) != crc) return -1;
-        bank_conv16();
+    if (bank.magic == PRE_MAGIC2 || bank.magic == PRE_MAGIC3) {          /* an older layout: read it, check it, convert it */
+        uint32_t crc = bank.crc, old2 = bank.magic == PRE_MAGIC2, n = old2 ? PRE16_BYTES : PRE17_BYTES;
+        if (st_read(PRESETS_AT, &bank, 8u + n) || crc32((const uint8_t *)&bank + 8u, n) != crc) return -1;
+        bank_conv((int)old2);
         return 0;
     }
     if (bank.magic != PRE_MAGIC || st_read(PRESETS_AT, &bank, sizeof bank) || bank.magic != PRE_MAGIC ||
@@ -1185,7 +1384,7 @@ static void chain_measure(void)                 /* a new measure while the chain
 /* ================================================================== 6. the screen */
 /* a theme: the ramp of the chrome (dark to bright), the two scenes' colours, a colour for each group of pages (HOME, FX,
  * LFO, GLO), and the towers (low to high). The first three keep their places in the saved settings. */
-enum { G_HOME, G_FX, G_LFO, G_GLO, G_ENV };                  /* the groups of pages: each has a colour in the theme */
+enum { G_HOME, G_FX, G_LFO, G_GLO, G_ENV, G_DRUM };                  /* the groups of pages: each has a colour in the theme */
 #define NTHEME 6u
 typedef struct { const char *name; uint16_t c[5]; uint16_t a, b, g[4], t0, t1; } theme_t;
 static const theme_t THEME[NTHEME] = {
@@ -1201,18 +1400,51 @@ static const theme_t THEME[NTHEME] = {
      RGB(90, 230, 160), RGB(170, 120, 255), {RGB(90, 230, 160), RGB(170, 120, 255), RGB(255, 120, 200), RGB(80, 200, 255)}, RGB(30, 90, 160), RGB(120, 255, 170)},
     {"NEON", {RGB(20, 10, 40), RGB(60, 30, 110), RGB(120, 60, 190), RGB(200, 100, 255), RGB(245, 200, 255)},
      RGB(255, 60, 170), RGB(60, 230, 255), {RGB(255, 60, 170), RGB(60, 230, 255), RGB(255, 230, 60), RGB(170, 110, 255)}, RGB(90, 20, 160), RGB(255, 90, 190)}};
-#define TH (THEME[glob.theme % NTHEME])
+static theme_t tcur;                            /* the theme in use: a copy of THEME[] made brighter and more saturated (theme_set) */
+#define TH tcur
+#define THN (THEME[glob.theme % NTHEME].name)
+static const uint8_t THEME_SAT[NTHEME] = {220, 0, 0, 215, 220, 240};      /* how saturated the instrument colours are in each theme (0: this theme keeps its own two scene colours) */
+/* a colour for each instrument: its hue on the wheel (0 red, 43 yellow, 85 green, 128 cyan, 170 blue, 213 magenta) */
+static const uint8_t INST_HUE[28] = {0, 32, 125, 205, 62, 5, 140, 70, 250, 175, 190, 36, 20, 15, 150, 225, 235, 95, 50, 160, 44, 110, 85, 118, 200, 100, 240, 180};
 /* fxs.cmode: 0 SOFT (one hue: the theme's ramp, the scenes by brightness), 1 RICH (the scenes, the groups and the towers in the theme's colours),
  * 2 WILD (RICH, and each tower, each ring of the globe and each flash in its own colour) */
-#define C_A (fxs.cmode == 0u ? pal[3] : TH.a)
-#define C_B (fxs.cmode == 0u ? pal[4] : TH.b)
-#define GCOL(grp) (fxs.cmode == 0u ? pal[3] : TH.g[(grp) == G_ENV ? G_FX : (grp) & 3u])
+static uint16_t col_a, col_b, col_mix;          /* RICH and WILD: each scene's colour is its instrument's; col_mix is where the morph is between them */
+static uint8_t col_key[4] = {255, 255, 255, 255};
+#define C_A (fxs.cmode == 0u ? pal[3] : col_a)
+#define C_B (fxs.cmode == 0u ? pal[4] : col_b)
+#define GCOL0(grp) (TH.g[(grp) == G_ENV ? G_FX : (grp) == G_DRUM ? G_LFO : (grp) & 3u])
+#define GCOL(grp) (fxs.cmode == 0u ? pal[3] : mixc(GCOL0(grp), col_mix, 70))        /* a group's colour, a little towards the morph's */
 
+static uint16_t vivid(uint16_t c)               /* brighter and more saturated */
+{
+    int32_t r = (int32_t)(c >> 11) * 255 / 31, g = (int32_t)((c >> 5) & 63u) * 255 / 63, b = (int32_t)(c & 31u) * 255 / 31, y = (r + g + b) / 3;
+    r = (y + (r - y) * 3 / 2) * 9 / 8; g = (y + (g - y) * 3 / 2) * 9 / 8; b = (y + (b - y) * 3 / 2) * 9 / 8;
+    return RGB(clampi(r, 0, 255), clampi(g, 0, 255), clampi(b, 0, 255));
+}
+static uint16_t hsv565(uint32_t h, uint32_t s, uint32_t v)      /* h 0..255 round the wheel */
+{
+    uint32_t reg = (h & 255u) / 43u, rem = ((h & 255u) - reg * 43u) * 6u, p = (v * (255u - s)) >> 8, q = (v * (255u - ((s * rem) >> 8))) >> 8,
+             t = (v * (255u - ((s * (255u - rem)) >> 8))) >> 8, r, g, b;
+    switch (reg) {
+    case 0: r = v; g = t; b = p; break;
+    case 1: r = q; g = v; b = p; break;
+    case 2: r = p; g = v; b = t; break;
+    case 3: r = p; g = q; b = v; break;
+    case 4: r = t; g = p; b = v; break;
+    default: r = v; g = p; b = q; break;
+    }
+    return RGB(r, g, b);
+}
 static void theme_set(uint32_t t)
 {
     uint32_t k;
     glob.theme = (uint8_t)(t % NTHEME);
-    for (k = 0; k < 5u; k++) pal[k] = THEME[glob.theme].c[k];
+    tcur = THEME[glob.theme];
+    for (k = 0; k < 5u; k++) tcur.c[k] = vivid(tcur.c[k]);
+    tcur.a = vivid(tcur.a); tcur.b = vivid(tcur.b); tcur.t0 = vivid(tcur.t0); tcur.t1 = vivid(tcur.t1);
+    for (k = 0; k < 4u; k++) tcur.g[k] = vivid(tcur.g[k]);
+    for (k = 0; k < 5u; k++) pal[k] = tcur.c[k];
+    col_key[3] = 255;                                                           /* (the scene colours are made again) */
 }
 
 static uint16_t mixc(uint16_t c0, uint16_t c1, uint32_t t)      /* t 0..255: c0 -> c1 */
@@ -1221,6 +1453,25 @@ static uint16_t mixc(uint16_t c0, uint16_t c1, uint32_t t)      /* t 0..255: c0 
     return (uint16_t)((((r0 * u + r1 * t) / 255u) << 11) | (((g0 * u + g1 * t) / 255u) << 5) | ((b0 * u + b1 * t) / 255u));
 }
 static uint16_t dimc(uint16_t c, uint32_t t) { return mixc(C_BLACK, c, t); }       /* t 255: as it is, 0: black */
+static void colours_update(void)                /* the scene colours: each its instrument's (where the theme has that), and the morph's between them */
+{
+    uint8_t k[4];
+    k[0] = cur.sc[0].inst; k[1] = cur.sc[1].inst; k[2] = glob.theme; k[3] = fxs.cmode;
+    if (memcmp(k, col_key, 4) != 0) {
+        uint32_t sat = THEME_SAT[glob.theme % NTHEME], ia = k[0], ib = k[1], ha = INST_HUE[ia % 28u], hb = INST_HUE[ib % 28u];
+        memcpy(col_key, k, 4);
+        col_a = TH.a; col_b = TH.b;
+        if (sat) {
+            uint32_t d = (hb - ha) & 255u;
+            if (ia && ia < NINST) col_a = hsv565(ha, sat, 255);
+            if (ib && ib < NINST) {
+                if (ia && ia < NINST && (d < 24u || d > 232u)) hb += 56u;           /* two alike: B is moved round the wheel, so that A and B can be told apart */
+                col_b = hsv565(hb, sat, 255);
+            }
+        }
+    }
+    col_mix = mixc(col_a, col_b, cur.morph_pos);
+}
 static uint16_t hue6(uint32_t i)                /* six colours of the theme, one after the other (for WILD) */
 {
     uint32_t k = i % 6u;
@@ -1287,6 +1538,10 @@ static void hud_note(const char *name, uint32_t n)
 #define GN 62u
 static int16_t gx[GN], gy[GN], gz[GN];
 static uint32_t gyaw, hit_seen;
+static uint32_t rip_t0[4];                      /* the ripples of the notes on the globe: when each began, and in whose colour */
+static uint16_t rip_col[4];
+static uint8_t idle_on, boot_done;               /* the formation screen is up; the boot logo has played */
+static uint32_t touch_ms;                       /* the last touch of anything */
 static struct { uint8_t v1, col, on; uint32_t t0, per, flare; } gtri[4];
 
 static void globe_init(void)
@@ -1331,7 +1586,7 @@ static void draw_globe(int32_t cx, int32_t cy)
     uint16_t rc[6];
     for (r = 0; r < 6u; r++) if (cur.lfo_rate[r] && cur.lfo_depth[r]) { lfo_on = 1; dsum += cur.lfo_depth[r]; }
     if (lfo_on) radius += (((lfo_out[0] ? lfo_out[0] : lfo_out[3]) >> 12) * (int32_t)(dsum > 255u ? 255u : dsum)) >> 11;
-    for (r = 0; r < 6u; r++) rc[r] = fxs.cmode == 0u ? pal[3] : hue6(r);
+    for (r = 0; r < 6u; r++) rc[r] = fxs.cmode == 0u ? pal[3] : mixc(hue6(r), col_mix, 90);
     for (i = 0; i < GN; i++) {                                                          /* rotate, then a little perspective */
         int32_t x = gx[i], y = gy[i], z = gz[i], x1, z1, y2, z2, den, sc;
         x1 = (x * yc + z * ys) >> 15;
@@ -1350,6 +1605,12 @@ static void draw_globe(int32_t cx, int32_t cy)
         hit_seen = hit;
         gtri[k].v1 = (uint8_t)(rnd32() % GN); gtri[k].on = 1; gtri[k].flare = now; gtri[k].t0 = now;
         gtri[k].col = (uint8_t)(rnd32() & 3u);
+        rip_t0[k] = now; rip_col[k] = cur.morph_pos > 127u ? C_B : C_A;                   /* a ripple goes out, in the colour of the scene that is louder */
+    }
+    {   /* the globe swells with each note: up to 3 px, in a quarter of a second */
+        uint32_t best = 1000u;
+        for (i = 0; i < 4u; i++) { uint32_t fl = now - gtri[i].flare; if (fl < best) best = fl; }
+        if (running && best < 250u) radius += (int32_t)((250u - best) * 3u / 250u);
     }
     for (i = 0; i < 4u; i++) {
         uint32_t fl = now - gtri[i].flare, br;
@@ -1390,6 +1651,15 @@ static void draw_globe(int32_t cx, int32_t cy)
         { uint16_t nc = fxs.cmode == 0u ? pal[4] : mixc(rc[ringi % 6u], pal[4], 140u);
           cv_rect(px[i] - 1, py[i] - 1, 2, 2, dimc(nc, al > 255u ? 255u : al)); }
     }
+    for (i = 0; i < 4u; i++) {                                                          /* the ripples: a ring that grows from the middle and fades */
+        uint32_t age = now - rip_t0[i], a;
+        if (!rip_t0[i] || age > 700u) continue;
+        for (a = 0; a < 40u; a++) {
+            uint32_t ph = a * 107374182u;                                               /* 2^32 / 40 */
+            int32_t rr_ = 6 + (int32_t)(age * 28u / 700u);
+            cv_rect(cx + ((cosine(ph) * rr_) >> 15), cy + ((sine(ph) * rr_) >> 15), 2, 2, dimc(rip_col[i], 255u - age * 255u / 700u));
+        }
+    }
 }
 
 /* ---- the PERF screen: header, globe + HUD, probability towers, morph bar, footer */
@@ -1413,7 +1683,7 @@ static void draw_towers(void)
     cv_begin(240, 64, C_BLACK);
     for (i = 0; i < 8u; i++) {
         int32_t x = 8 + (int32_t)i * 28, h = 2 + (int32_t)pv[i] * 54 / 255, th = 2 + (int32_t)trail[i] * 54 / 255;
-        uint16_t lo = fxs.cmode == 0u ? pal[1] : TH.t0, hi = fxs.cmode == 0u ? pal[3] : fxs.cmode == 2u ? hue6(i) : TH.t1;     /* the tower's colours: low level .. high level */
+        uint16_t lo = fxs.cmode == 0u ? pal[1] : dimc(col_mix, 80), hi = fxs.cmode == 0u ? pal[3] : fxs.cmode == 2u ? hue6(i) : mixc(col_mix, C_WHITE, 70);     /* the tower's colours: low level .. high level (RICH: the morph's colour) */
         uint16_t col = (mute_mask >> i) & 1u ? pal[1] : (running && cstep == i) ? pal[4] : mixc(lo, hi, pv[i]);
         if (th > h) cv_rect(x, 60 - th, 24, th - h, dimc(mixc(lo, hi, trail[i]), 90));   /* the phosphor trail above */
         cv_rect(x, 60 - h, 24, h, col);
@@ -1437,6 +1707,7 @@ static void draw_head(void)
     if (frozen) p = p_str(p, " FRZ");
     if (rec_state) p = p_str(p, rec_state == 1u ? " ARM" : " REC");
     if (chain_on) p = p_str(p, " CHN");
+    if (cur.dr_on) p = p_str(p, " DR");
     if (auto_roll) p = p_str(p, " RND");
     *p = 0;
     draw_text_box(8, 2, 224, &FONT_S, s, frozen ? pal[4] : edit_sc ? C_B : C_A, 0);
@@ -1522,7 +1793,7 @@ static void draw_foot(void)
         p = p_str(p, "OCT ");
         p = p_sig(p, cur.oct);
         p = p_str(p, "  ");
-        p = p_str(p, TH.name);
+        p = p_str(p, THN);
         if (xc_follow) p = p_str(p, "  EXT");                 /* the steps follow an external MIDI clock */
         if (bt_state() == BT_READY) p = p_str(p, "  BT");    /* a Bluetooth central is connected and listening */
         *p = 0;
@@ -1544,7 +1815,8 @@ static void draw_foot(void)
 /* ---- the cells: what one knob controls on a page, how it reads, how it turns */
 enum { K_NONE, K_DENS, K_SWING, K_P, K_AB, K_INST, K_TIMB, K_DLY, K_LVL, K_LSPD, K_LDEP, K_BPM, K_STEP, K_TRANS,
        K_THEME, K_ROOT, K_SCALE, K_CHA, K_CHB, K_RSND, K_RSIZ, K_RTON, K_DTM, K_DFB, K_DTN, K_SYNC, K_CHRD, K_VOIC, K_AMODE, K_ABARS, K_ASHP, K_CSRC,
-       K_CMODE, K_METER, K_CCIN, K_PCIN, K_PANA, K_PANB, K_LSHP, K_LPHS, K_ENVA, K_ENVD, K_ENVS, K_ENVR, K_POLY, K_WAVE };
+       K_CMODE, K_METER, K_CCIN, K_PCIN, K_PANA, K_PANB, K_LSHP, K_LPHS, K_ENVA, K_ENVD, K_ENVS, K_ENVR, K_POLY, K_WAVE,
+       K_DON, K_DLVL, K_DTONE, K_DDEC, K_DSHD, K_DSPC, K_DTUNE, K_DFOL, K_DSND, K_DCH };
 typedef struct { uint8_t kind, arg; } cell_t;
 
 static const char *const PSHORT[6] = {"MORPH", "REST", "LEGATO", "ENTROP", "HARMNY", "CHAOS"};
@@ -1602,7 +1874,7 @@ static void cell_text(cell_t c, char *name, char *val, int32_t *bar, uint32_t *s
     case K_BPM: cpy(name, "BPM"); *p_num(val, bpm_get(&cur)) = 0; break;
     case K_STEP: cpy(name, "STEP"); cpy(val, DIV_NAME[cur.div & 3u]); break;
     case K_TRANS: cpy(name, "TRANSP"); *p_sig(val, cur.tr) = 0; break;
-    case K_THEME: cpy(name, "THEME"); cpy(val, TH.name); break;
+    case K_THEME: cpy(name, "THEME"); cpy(val, THN); break;
     case K_ROOT: cpy(name, "ROOT"); cpy(val, ROOT_NAME[cur.root % 12u]); break;
     case K_SCALE: cpy(name, "SCALE"); cpy(val, SCALE_SHORT[cur.scale % 10u]); break;
     case K_CHA: cpy(name, "CH A"); *p_num(val, (uint32_t)glob.ch[0] + 1u) = 0; break;
@@ -1629,6 +1901,24 @@ static void cell_text(cell_t c, char *name, char *val, int32_t *bar, uint32_t *s
     }
     case K_ENVS: cpy(name, "SUS"); *p_p100(val, env_sus(v->inst, v->env[2])) = 0; *bar = v->env[2]; *scn = (c.arg & 1u) + 1u; break;
     case K_POLY: cpy(name, "POLY"); cpy(val, OFFON_NAME[cur.poly & 1u]); break;
+    case K_DON: cpy(name, "DRUMS"); cpy(val, OFFON_NAME[cur.dr_on & 1u]); break;
+    case K_DLVL: cpy(name, "LEVEL"); *p_p100(val, cur.dr_level) = 0; *bar = cur.dr_level; break;
+    case K_DTONE: cpy(name, "TONE"); *p_p100(val, cur.dr_tone) = 0; *bar = cur.dr_tone; break;
+    case K_DDEC: cpy(name, "DECAY"); *p_p100(val, cur.dr_decay) = 0; *bar = cur.dr_decay; break;
+    case K_DSHD: cpy(name, c.arg & 1u ? "SHDW B" : "SHDW A"); *p_p100(val, cur.dr_shadow[c.arg & 1u]) = 0; *bar = cur.dr_shadow[c.arg & 1u]; *scn = (c.arg & 1u) + 1u; break;
+    case K_DSPC: cpy(name, c.arg & 1u ? "SPCE B" : "SPCE A"); *p_p100(val, cur.dr_space[c.arg & 1u]) = 0; *bar = cur.dr_space[c.arg & 1u]; *scn = (c.arg & 1u) + 1u; break;
+    case K_DTUNE: {
+        int32_t t = clampi((int32_t)cur.dr_tune - 128, -12, 12);
+        char *q = val;
+        cpy(name, "TUNE");
+        if (t > 0) *q++ = '+'; else if (t < 0) { *q++ = '-'; t = -t; }
+        q = p_num(q, (uint32_t)t); *q = 0;
+        *bar = ((int32_t)clampi((int32_t)cur.dr_tune - 128, -12, 12) + 12) * 255 / 24;
+        break;
+    }
+    case K_DFOL: cpy(name, "FOLLOW"); cpy(val, OFFON_NAME[cur.dr_follow & 1u]); break;
+    case K_DSND: cpy(name, "SEND"); *p_p100(val, cur.dr_send) = 0; *bar = cur.dr_send; break;
+    case K_DCH: cpy(name, "DRUM CH"); *p_num(val, (uint32_t)glob.ch[2] + 1u) = 0; break;
     case K_SYNC: cpy(name, "SYNC"); cpy(val, SYNC_NAME[fxs.sync % 3u]); break;
     case K_CHRD: cpy(name, "CHORD"); cpy(val, CHORD_NAME[fxs.chord & 3u]); break;
     case K_VOIC: cpy(name, "SPREAD"); cpy(val, VOIC_NAME[fxs.voic % 3u]); break;
@@ -1703,6 +1993,16 @@ static void cell_adj(cell_t c, int32_t d)       /* d: signed clicks, larger when
     case K_ENVS: adj(&v->env[2], d, 3); break;
     case K_ENVR: adj(&v->env[3], d, 3); break;
     case K_POLY: cur.poly = sg > 0 ? 1u : 0u; break;
+    case K_DON: cur.dr_on = sg > 0 ? 1u : 0u; break;
+    case K_DLVL: adj(&cur.dr_level, d, 3); break;
+    case K_DTONE: adj(&cur.dr_tone, d, 3); break;
+    case K_DDEC: adj(&cur.dr_decay, d, 3); break;
+    case K_DSHD: adj(&cur.dr_shadow[c.arg & 1u], d, 3); break;
+    case K_DSPC: adj(&cur.dr_space[c.arg & 1u], d, 3); break;
+    case K_DTUNE: cur.dr_tune = (uint8_t)(128 + clampi((int32_t)cur.dr_tune - 128 + sg, -12, 12)); break;
+    case K_DFOL: cur.dr_follow = sg > 0 ? 1u : 0u; break;
+    case K_DSND: adj(&cur.dr_send, d, 3); break;
+    case K_DCH: glob.ch[2] = (uint8_t)clampi((int32_t)glob.ch[2] + sg, 0, 15); break;
     case K_SYNC: fxs.sync = (uint8_t)clampi((int32_t)fxs.sync + sg, 0, 2); break;
     case K_CHRD: fxs.chord = (uint8_t)clampi((int32_t)fxs.chord + sg, 0, 3); break;
     case K_VOIC: fxs.voic = (uint8_t)clampi((int32_t)fxs.voic + sg, 0, 2); break;
@@ -1743,7 +2043,7 @@ static int32_t knob_delta(uint32_t id, int32_t e)   /* a fast turn takes bigger 
 }
 
 /* ---- pages: two halves of four cells; the knobs 1-4 turn the cells of the lit half; the buttons step through */
-static const char *const GROUP_NAME[5] = {"HOME", "FX", "LFO", "GLO", "ENV"};
+static const char *const GROUP_NAME[6] = {"HOME", "FX", "LFO", "GLO", "ENV", "DRUM"};
 typedef struct { uint8_t group, pos, flags; const char *tab; cell_t c[4]; } half_t;       /* flags 1: only shown (the knobs do not go to it, SELECT skips it) */
 #define LF(i, nm) {G_LFO, 0, 1, nm, {{K_WAVE, i}, {K_NONE, 0}, {K_NONE, 0}, {K_NONE, 0}}}, \
                   {G_LFO, 1, 0, nm, {{K_LSHP, i}, {K_LSPD, i}, {K_LDEP, i}, {K_LPHS, i}}}
@@ -1766,6 +2066,9 @@ static const half_t HALF[] = {
     {G_GLO, 1, 0, "SYNC", {{K_SYNC, 0}, {K_CSRC, 0}, {K_NONE, 0}, {K_NONE, 0}}},
     {G_GLO, 0, 0, "AUTO A-B", {{K_AMODE, 0}, {K_ABARS, 0}, {K_ASHP, 0}, {K_NONE, 0}}},
     {G_GLO, 1, 0, "MIDI IN LOOK", {{K_CCIN, 0}, {K_PCIN, 0}, {K_CMODE, 0}, {K_METER, 0}}},
+    {G_DRUM, 0, 0, "KIT", {{K_DON, 0}, {K_DLVL, 0}, {K_DTONE, 0}, {K_DDEC, 0}}},
+    {G_DRUM, 1, 0, "FEEL", {{K_DSHD, 0}, {K_DSPC, 0}, {K_DSHD, 1}, {K_DSPC, 1}}},
+    {G_DRUM, 0, 0, "TUNING", {{K_DTUNE, 0}, {K_DFOL, 0}, {K_DSND, 0}, {K_DCH, 0}}},
 };
 #define NHALF ((int32_t)(sizeof HALF / sizeof HALF[0]))
 static int32_t cur_half = -1;                   /* -1: the performance screen */
@@ -1820,7 +2123,7 @@ static uint32_t half_voice(int32_t h)           /* the voice a half is about: 0 
 }
 
 /* ---- the other screens: the menus (SELECT knob) with rows of label, value, bar */
-enum { V_PERF, V_SCALE, V_COPY, V_CHAIN, V_SYS, V_SYS2, V_PAGE, V_SLOTS };      /* (SELECT goes through V_SCALE .. V_SYS2 in this order) */
+enum { V_PERF, V_SCALE, V_COPY, V_CHAIN, V_SYS, V_SYS2, V_PAGE, V_SLOTS, V_IDLE };      /* (SELECT goes through V_SCALE .. V_SYS2 in this order) */
 static uint8_t view, view_drawn = 255;
 static uint8_t menu_pg, copy_act, copy_slot, chain_sel, save_mode, recall_mode, tr_view;
 static uint32_t tr_t0;
@@ -1865,10 +2168,11 @@ static uint32_t view_row(uint32_t i, row_t *r)  /* 0: no such row */
     case V_SYS2:
         if (i == 0) { setrow(r, "HELP TEXT", -1, 0); setval_s(r, fxs.hint ? "ON" : "OFF"); return 1; }
         if (i == 1) { setrow(r, "REC KEEPS", -1, 0); setval_s(r, fxs.recm ? "+MOTION" : "NOTES"); return 1; }
-        if (i == 2) { char *p = p_str(r->label, "TAP TEMPO"); *p = 0; r->bar = -1; r->hl = 0; p = p_str(r->value, "SAVE "); p = p_num(p, bpm_get(&cur)); *p = 0; return 1; }
+        if (i == 2) { static const char *const IDLE_NAME[4] = {"OFF", "30 SEC", "1 MIN", "3 MIN"}; setrow(r, "IDLE SCREEN", -1, 0); setval_s(r, IDLE_NAME[fxs.idle & 3u]); return 1; }
+        if (i == 3) { char *p = p_str(r->label, "TAP TEMPO"); *p = 0; r->bar = -1; r->hl = 0; p = p_str(r->value, "SAVE "); p = p_num(p, bpm_get(&cur)); *p = 0; return 1; }
         return 0;
     case V_SYS:
-        if (i == 0) { setrow(r, "THEME", -1, 0); setval_s(r, TH.name); return 1; }
+        if (i == 0) { setrow(r, "THEME", -1, 0); setval_s(r, THN); return 1; }
         if (i == 1) { setrow(r, "OUT A CH", -1, 0); setval_n(r, (uint32_t)glob.ch[0] + 1u); return 1; }
         if (i == 2) { setrow(r, "OUT B CH", -1, 0); setval_n(r, (uint32_t)glob.ch[1] + 1u); return 1; }
         if (i == 3) {                           /* knob 4: BLUETOOTH, off at every power-on */
@@ -1946,6 +2250,16 @@ static const char *help_text(cell_t c)
     case K_ENVS: return "The level it holds while the key is down.";
     case K_ENVR: return "How long a note rings after you let go.";
     case K_POLY: return "Builds a chord on every note; HARMONY sets its size.";
+    case K_DON: return "A gentle kit that follows the melody and keeps out of its way.";
+    case K_DLVL: return "How loud the drums are. They always stay under the melody.";
+    case K_DTONE: return "Brightness of the hats and brush: low is soft and dark.";
+    case K_DDEC: return "How long the drums ring.";
+    case K_DSHD: return "How much the drums answer the melody's leaps and gaps.";
+    case K_DSPC: return "Room left for the melody: high keeps the drums to its gaps.";
+    case K_DTUNE: return "Tunes the kick and tom, in semitones from the key.";
+    case K_DFOL: return "The kick moves to the fifth when the melody leaves the chord.";
+    case K_DSND: return "How much of the drums goes into the reverbs.";
+    case K_DCH: return "The MIDI channel the drums send on (10 is the usual).";
     default: return "";
     }
 }
@@ -2040,6 +2354,122 @@ static void draw_slots(void)                    /* the 16 preset slots: filled =
 }
 
 /* one panel of a page: four cells, the lit half framed bright */
+/* ---- the formation: 36 particles that spring to a shape (a ring, two rings, a spiral, a lattice, a wave, three rings like the globe), scatter when a note sounds and
+ * form again. It is the screen that comes by itself after a while untouched (IDLE in SYSTEM 2), and, forming a ring round the name, the boot logo. A frame is made
+ * every 50 ms, in four strips of 60 rows, one strip a call. */
+#define NP 36
+#define BOOT_MS 2400u
+static int32_t pq_x[NP], pq_y[NP], pq_vx[NP], pq_vy[NP];       /* Q8 */
+static uint8_t form_shape, form_init;
+static uint32_t boot_age;                       /* ms since the boot logo began */
+static uint32_t form_t0, form_hits, form_rot;
+static const uint32_t IDLE_MS[4] = {0, 30000u, 60000u, 180000u};
+
+static void form_target(uint32_t shape, uint32_t i, int32_t *tx, int32_t *ty)       /* where particle i goes (pixels) */
+{
+    uint32_t ph = i * (4294967295u / NP) + form_rot;
+    switch (shape % 6u) {
+    case 0: *tx = 120 + ((cosine(ph) * 92) >> 15); *ty = 120 + ((sine(ph) * 92) >> 15); break;                                      /* a ring */
+    case 1: { uint32_t j = i % (NP / 2u), p2 = j * (4294967295u / (NP / 2u)) + (i < NP / 2u ? form_rot : 0u - form_rot);
+              *tx = (i < NP / 2u ? 84 : 156) + ((cosine(p2) * 56) >> 15); *ty = 120 + ((sine(p2) * 56) >> 15); break; }            /* two rings, A and B */
+    case 2: { int32_t r = 8 + (int32_t)i * 3; *tx = 120 + ((cosine(ph * 3u) * r) >> 15); *ty = 120 + ((sine(ph * 3u) * r) >> 15); break; }   /* a spiral */
+    case 3: *tx = 120 + ((int32_t)(i % 6u) - 2) * 26 - 13; *ty = 120 + ((int32_t)(i / 6u) - 2) * 26 - 13; break;                  /* a lattice */
+    case 4: *tx = 16 + (int32_t)i * 6; *ty = 120 + ((sine(ph * 2u + form_rot * 2u) * 60) >> 15); break;                           /* a wave */
+    default: { uint32_t ring = i / 12u, j = i % 12u, p3 = j * 357913941u + form_rot; int32_t r = 44 + (int32_t)ring * 22;
+               *tx = 120 + ((cosine(p3) * r) >> 15); *ty = 120 + ((sine(p3) * (r * 2 / 5 + (int32_t)ring * 14)) >> 15) + ((int32_t)ring - 1) * 30; break; }   /* three rings */
+    }
+}
+static void form_reset(uint32_t scattered)
+{
+    uint32_t i;
+    for (i = 0; i < NP; i++) {
+        int32_t tx, ty;
+        form_target(form_shape, i, &tx, &ty);
+        if (scattered) { pq_x[i] = (int32_t)(((i + 3u) * 2654435761u >> 8) % 240u) << 8; pq_y[i] = (int32_t)(((i + 5u) * 40503u * 7919u >> 6) % 240u) << 8; }
+        else { pq_x[i] = tx << 8; pq_y[i] = ty << 8; }
+        pq_vx[i] = pq_vy[i] = 0;
+    }
+    form_init = 1;
+}
+static void form_step(uint32_t boot)             /* one frame of the motion */
+{
+    uint32_t i, now = fm1_ms;
+    if (!form_init) form_reset(boot);
+    if (!boot && now - form_t0 > 7000u) { form_t0 = now; form_shape = (uint8_t)((form_shape + 1u) % 6u); }          /* a new formation every seven seconds */
+    form_rot += 3000000u;
+    if (hit_n != form_hits) {                                                                                        /* a note: they scatter, outward */
+        form_hits = hit_n;
+        for (i = 0; i < NP; i++) {
+            pq_vx[i] += ((pq_x[i] >> 8) - 120) * 6 + (int32_t)(rnd32() % 1200u) - 600;
+            pq_vy[i] += ((pq_y[i] >> 8) - 120) * 6 + (int32_t)(rnd32() % 1200u) - 600;
+        }
+    }
+    for (i = 0; i < NP; i++) {
+        int32_t tx, ty;
+        form_target(boot ? 0u : form_shape, i, &tx, &ty);
+        pq_vx[i] += ((tx << 8) - pq_x[i]) >> 4;
+        pq_vy[i] += ((ty << 8) - pq_y[i]) >> 4;
+        pq_vx[i] -= pq_vx[i] >> 3; pq_vy[i] -= pq_vy[i] >> 3;
+        pq_x[i] += pq_vx[i]; pq_y[i] += pq_vy[i];
+    }
+}
+static void form_strip(uint32_t strip, uint32_t boot)           /* draw 60 rows of the frame */
+{
+    uint32_t i, y0 = strip * 60u, t = boot_age;
+    cv_begin(240, 60, C_BLACK);
+    cv_oy = -(int32_t)y0;
+    for (i = 0; i < NP; i++) {                                                                                       /* the lines between neighbours: the structure */
+        uint32_t j = (i + 1u) % NP;
+        int32_t sp = (pq_vx[i] < 0 ? -pq_vx[i] : pq_vx[i]) + (pq_vy[i] < 0 ? -pq_vy[i] : pq_vy[i]);
+        if (!boot && form_shape == 3u) {
+            if (i % 6u != 5u) cv_line(pq_x[i] >> 8, pq_y[i] >> 8, pq_x[i + 1u] >> 8, pq_y[i + 1u] >> 8, dimc(col_mix, 60));
+            if (i + 6u < NP) cv_line(pq_x[i] >> 8, pq_y[i] >> 8, pq_x[i + 6u] >> 8, pq_y[i + 6u] >> 8, dimc(col_mix, 60));
+            continue;
+        }
+        if (!boot && ((form_shape == 4u && j == 0u) || (form_shape == 1u && (i == NP / 2u - 1u || j == 0u)))) continue;
+        cv_line(pq_x[i] >> 8, pq_y[i] >> 8, pq_x[j] >> 8, pq_y[j] >> 8, dimc(col_mix, sp > 3000 ? 40u : 90u));
+    }
+    for (i = 0; i < NP; i++) {                                                                                       /* the particles: A's colour for half, B's for the rest; bright when quick */
+        int32_t sp = (pq_vx[i] < 0 ? -pq_vx[i] : pq_vx[i]) + (pq_vy[i] < 0 ? -pq_vy[i] : pq_vy[i]), br = 150 + (sp >> 4);
+        uint16_t c = i < NP / 2u ? C_A : C_B;
+        cv_rect((pq_x[i] >> 8) - 1, (pq_y[i] >> 8) - 1, 3, 3, dimc(c, br > 255 ? 255u : (uint32_t)br));
+    }
+    if (boot) {                                                                                                      /* the name, a letter at a time, then the version */
+        static const char NAME[] = "FORMATION";
+        uint32_t n = t > 300u ? (t - 300u) / 90u : 0u, k, x = (240u - (uint32_t)text_w(&FONT_L, NAME)) / 2u;
+        for (k = 0; k < 9u && k < n; k++) {
+            char one[2];
+            one[0] = NAME[k]; one[1] = 0;
+            cv_text((int32_t)x, 104, &FONT_L, one, k < 5u ? C_A : C_B);
+            x += (uint32_t)text_w(&FONT_L, one);
+        }
+        if (t > 1300u) cv_text((240 - text_w(&FONT_S, "v" APP_VER)) / 2, 148, &FONT_S, "v" APP_VER, dimc(pal[4], t > 1700u ? 255u : (t - 1300u) * 255u / 400u));
+    }
+    cv_oy = 0;
+    cv_blit(0, y0);
+}
+static void form_job(uint32_t boot)             /* one call, one strip (a new frame every 50 ms) */
+{
+    static uint32_t frame_t, strip = 4;
+    if (strip >= 4u) {
+        if (fm1_ms - frame_t < 50u) return;
+        frame_t = fm1_ms; form_step(boot); strip = 0;
+    }
+    form_strip(strip, boot);
+    strip++;
+}
+
+/* ---- the page transition (a page slides in from the side and brightens, in four frames of 50 ms) and the value pulse (a value you turn flashes white and settles) */
+static int32_t tr_pg = -1, tr_dir = 1, pulse_half = -1, pulse_i;
+static uint32_t tr_t0, pulse_t0;
+static const int8_t TR_OX[5] = {36, 22, 10, 3, 0};
+static const uint8_t TR_DIM[5] = {110, 145, 180, 215, 255};
+static uint32_t pulse_age(int32_t hi, int lit)  /* ms since the value last turned (300 or more: not pulsing) */
+{
+    uint32_t age = fm1_ms - pulse_t0;
+    return (lit && hi == pulse_half && age < 300u) ? age : 300u;
+}
+
 static void draw_panel(int32_t hi, uint32_t y, int lit)
 {
     uint32_t i;
@@ -2062,10 +2492,14 @@ static void draw_panel(int32_t hi, uint32_t y, int lit)
             cv_text(x + 3, 4, &FONT_S, name, lit ? cc : dimc(cc, 90));
             vf = text_w(&FONT_L, val) <= 52 ? &FONT_L : &FONT_S;
             vy = vf == &FONT_L ? 20 : 28;
-            cv_text(x + (52 - text_w(vf, val)) / 2, vy, vf, val, lit ? pal[4] : dimc(pal[4], 120));
-            if (bar >= 0) {
-                cv_rect(x + 3, 56, 46, 3, dimc(cc, 50));
-                cv_rect(x + 3, 56, bar * 46 / 255, 3, lit ? cc : dimc(cc, 90));
+            {
+                uint32_t pa = (int32_t)i == pulse_i ? pulse_age(hi, lit) : 300u, k = 255u - pa * 255u / 300u;                  /* the value you just turned: white, settling */
+                cv_text(x + (52 - text_w(vf, val)) / 2, vy, vf, val, lit ? (pa < 300u ? mixc(pal[4], C_WHITE, k) : pal[4]) : dimc(pal[4], 120));
+                if (bar >= 0) {
+                    cv_rect(x + 3, 56, 46, 3, dimc(cc, 50));
+                    cv_rect(x + 3, 56, bar * 46 / 255, 3, lit ? (pa < 300u ? mixc(cc, C_WHITE, k / 2u) : cc) : dimc(cc, 90));
+                    if (pa < 300u) cv_rect(x + 3, 52, 46, 2, dimc(cc, k));
+                }
             }
             if (i) cv_rect(x - 2, 10, 1, 44, pal[0]);
         }
@@ -2094,6 +2528,7 @@ static uint32_t panel_sig(int32_t hi, int lit)
         cell_text(HALF[hi].c[i], name, val, &bar, &scn);
         h = h * 31u + sig_str(name) + sig_str(val) * 7u + (uint32_t)(bar + 1);
     }
+    { uint32_t pa = pulse_age(hi, lit); if (pa < 300u) h = h * 31u + 1u + pa / 60u; }     /* (a new picture for each step of the pulse) */
     return h;
 }
 
@@ -2110,19 +2545,32 @@ static uint32_t sig_of(const void *p, uint32_t n)
 }
 
 /* one draw job a call: so a note due in the main loop never waits for more than one strip of the screen */
+static void trans_on(uint32_t tf) { cv_ox = tr_dir * (int32_t)TR_OX[tf > 4u ? 4u : tf]; cv_dim = TR_DIM[tf > 4u ? 4u : tf]; }
+static void trans_off(void) { cv_ox = 0; cv_dim = 255; }
 static void draw_tick(void)
 {
     uint32_t i;
+    if (!boot_done) {                           /* the boot logo: the particles gather in a ring round the name */
+        static uint32_t b0;
+        static uint8_t started;
+        if (!started) { started = 1; b0 = fm1_ms; }
+        boot_age = fm1_ms - b0;
+        if (boot_age >= BOOT_MS) { boot_done = 1; view_drawn = 255; return; }
+        form_job(1);
+        return;
+    }
     if (view != view_drawn) {                   /* a new screen: clear it, the rest follows strip by strip */
         lcd_fill(0, 0, 240, 240, C_BLACK);
         view_drawn = view;
         for (i = 0; i < 5u; i++) rows_cache[i][0] = 1;
         head_cache[0] = 0x7F; pg_head[0] = 1;                 /* (a value no header has: it is drawn again) */
         foot_sig = 0; morph_sig = 0; slots_sig = 0; pg_sig[0] = pg_sig[1] = 0; help_drawn = 0;
-        t_anim = 0;
+        t_anim = 0; tr_pg = -1;
+        if (view == V_IDLE) { form_t0 = fm1_ms; form_init = 0; }
         if (view == V_SCALE || view == V_COPY || view == V_CHAIN || view == V_SYS || view == V_SYS2) draw_text_box(0, 18, 240, &FONT_L, view_title(), C_A, 1);
         return;
     }
+    if (view == V_IDLE) { form_job(0); return; }
     if (view == V_PERF || view == V_PAGE) {
         uint32_t m = sig_of(&cur.morph_pos, 1) ^ ((uint32_t)edit_sc << 8) ^ ((uint32_t)mute_mask << 12) ^ sig_of(cur.lfo_rate, 12) ^ ((uint32_t)glob.theme << 20);
         uint32_t f = sig_of(&cur.density, 2) ^ ((uint32_t)cur.oct << 16) ^ ((uint32_t)glob.theme << 24);
@@ -2133,14 +2581,17 @@ static void draw_tick(void)
         if (view == V_PERF) {
             char hs[8];
             hs[0] = (char)(edit_sc + 1u); hs[1] = (char)(cur.mode + 1u); hs[2] = (char)(latch + 1u);
-            hs[3] = (char)(cur.poly + 1u + 2u * auto_roll + 4u * rec_state + 12u * chain_on); hs[4] = (char)(frozen + 1u + 2u * (bpm_get(&cur) >> 8)); hs[5] = (char)(bpm_get(&cur) & 255u);
+            hs[3] = (char)(cur.poly + 1u + 2u * auto_roll + 4u * rec_state + 12u * chain_on + 24u * cur.dr_on); hs[4] = (char)(frozen + 1u + 2u * (bpm_get(&cur) >> 8)); hs[5] = (char)(bpm_get(&cur) & 255u);
             hs[6] = (char)(1u + glob.theme); hs[7] = 0;
             if (memcmp(head_cache, hs, 7) != 0) { memcpy(head_cache, hs, 8); draw_head(); return; }
         } else {
             int32_t lit = cur_half, top = lit - HALF[lit].pos;
             int32_t bot = (top + 1 < NHALF && HALF[top + 1].group == HALF[top].group && HALF[top + 1].pos == 1) ? top + 1 : -1;
             char hs[40], *p;
-            uint32_t s0, s1;
+            uint32_t s0, s1, tf;
+            int32_t pgid = (int32_t)HALF[lit].group * 16 + page_of(lit);
+            if (pgid != tr_pg) { tr_dir = (tr_pg < 0 || pgid > tr_pg) ? 1 : -1; tr_pg = pgid; tr_t0 = fm1_ms; }       /* a new page slides in */
+            tf = fm1_ms - tr_t0 < 200u ? (fm1_ms - tr_t0) / 50u : 4u;
             memset(hs, 0, sizeof hs);
             p = p_str(hs, GROUP_NAME[HALF[lit].group]);
             p = p_str(p, "  ");
@@ -2153,10 +2604,21 @@ static void draw_tick(void)
                 draw_dots(HALF[lit].group, lit);
                 return;
             }
-            s0 = panel_sig(top, HALF[lit].pos == 0);
-            if (s0 != pg_sig[0]) { pg_sig[0] = s0; if (HALF[top].c[0].kind == K_WAVE) draw_wave(top, 22, HALF[lit].pos == 0); else draw_panel(top, 22, HALF[lit].pos == 0); return; }
-            s1 = panel_sig(bot, HALF[lit].pos == 1);
-            if (s1 != pg_sig[1]) { pg_sig[1] = s1; if (bot < 0) lcd_fill(0, 92, 240, 64, C_BLACK); else draw_panel(bot, 92, HALF[lit].pos == 1); return; }
+            s0 = panel_sig(top, HALF[lit].pos == 0) + (tf < 4u ? (tf + 1u) * 100003u : 0u);
+            if (s0 != pg_sig[0]) {
+                pg_sig[0] = s0;
+                trans_on(tf);
+                if (HALF[top].c[0].kind == K_WAVE) draw_wave(top, 22, HALF[lit].pos == 0); else draw_panel(top, 22, HALF[lit].pos == 0);
+                trans_off();
+                return;
+            }
+            s1 = panel_sig(bot, HALF[lit].pos == 1) + (tf < 4u ? (tf + 1u) * 100003u : 0u);
+            if (s1 != pg_sig[1]) {
+                pg_sig[1] = s1;
+                if (bot < 0) lcd_fill(0, 92, 240, 64, C_BLACK);
+                else { trans_on(tf); draw_panel(bot, 92, HALF[lit].pos == 1); trans_off(); }
+                return;
+            }
         }
         { uint32_t hs = (fxs.hint && (int32_t)(help_until - fm1_ms) > 0) ? help_gen * 2u + 1u : 0u;    /* the beginner text takes the bottom third while it is on */
           if (hs != help_drawn) { help_drawn = hs; if (hs) draw_help(); else { lcd_fill(0, 162, 240, 78, C_BLACK); morph_sig = 0; foot_sig = 0; } return; }
@@ -2254,6 +2716,7 @@ static void select_view(void)
     if (save_mode || recall_mode) v = V_SLOTS;
     else if (tr_view) v = tr_view;
     else if (cur_half >= 0) v = V_PAGE;
+    else if (idle_on) v = V_IDLE;
     view = v;
 }
 
@@ -2262,7 +2725,8 @@ typedef struct { saved_t s; uint8_t bt[BT_KEPT]; } saved2_t;                    
 typedef struct { saved_t s; uint8_t bt[BT_KEPT]; uint8_t fx[4]; } saved3_t;               /* + delay time, feedback, tone, sync (229 B) */
 typedef struct { saved_t s; uint8_t bt[BT_KEPT]; uint8_t fx[8]; } saved4_t;               /* + colour, meter, CC / program change in, the pans (233 B): v1.6 */
 typedef struct { saved_t s; uint8_t bt[112]; } saved1b_t;                            /* the record of the first Bluetooth builds (197 B) */
-typedef struct { preset_t cur; uint8_t ver, theme, ch0, ch1, slot; uint8_t bt[BT_KEPT]; uint8_t fx[8]; uint8_t chain[CHAIN_N]; } saved5_t;   /* v1.7 */
+typedef struct { preset17_t cur; uint8_t ver, theme, ch0, ch1, slot; uint8_t bt[BT_KEPT]; uint8_t fx[8]; uint8_t chain[CHAIN_N]; } saved5_t;   /* v1.7 */
+typedef struct { preset_t cur; uint8_t ver, theme, ch0, ch1, slot; uint8_t bt[BT_KEPT]; uint8_t fx[8]; uint8_t chain[CHAIN_N]; uint8_t ch2, spare; } saved6_t;   /* v1.8: + the drums' MIDI channel */
 
 static void leds(uint32_t lit_notes)
 {
@@ -2278,7 +2742,7 @@ static void leds(uint32_t lit_notes)
     led(BTN_FX, g == G_FX);
     led(BTN_LFO, g == G_LFO);
     led(BTN_GLO, g == G_GLO);
-    led(BTN_HOME, g < 0 || g == G_HOME);
+    led(BTN_HOME, g < 0 || g == G_HOME || g == G_DRUM);
     led(BTN_SAVE, save_mode ? blink : recall_mode);
     led(BTN_OCT_DOWN, cur.oct < 0);
     led(BTN_OCT_UP, cur.oct > 0);
@@ -2310,6 +2774,7 @@ static void fx_load(const uint8_t *f, uint32_t n)
         fxs.meter = (f[4] >> 2) & 1u; fxs.ccin = (f[4] >> 3) & 1u; fxs.pcin = (f[4] >> 4) & 1u;
         fxs.pana = f[5]; fxs.panb = f[6];
         fxs.hint = f[7] & 1u; fxs.recm = (f[7] >> 1) & 1u;
+        { uint32_t v = (f[7] >> 2) & 7u; fxs.idle = v ? (uint8_t)(v - 1u) : 2u; if (fxs.idle > 3u) fxs.idle = 2; }     /* (stored plus one: 0 is a record from before it, and gets the default) */
     }
 }
 static void fx_save(uint8_t *f)
@@ -2318,10 +2783,10 @@ static void fx_save(uint8_t *f)
     f[1] = leg_dly[1]; f[2] = leg_dly[2];
     f[3] = (uint8_t)(fxs.sync | fxs.chord << 2 | fxs.voic << 4 | fxs.csrc << 6);
     f[4] = (uint8_t)(fxs.cmode | fxs.meter << 2 | fxs.ccin << 3 | fxs.pcin << 4);
-    f[5] = fxs.pana; f[6] = fxs.panb; f[7] = (uint8_t)(fxs.hint | fxs.recm << 1);
+    f[5] = fxs.pana; f[6] = fxs.panb; f[7] = (uint8_t)(fxs.hint | fxs.recm << 1 | (fxs.idle + 1u) << 2);
 }
 
-static saved5_t sv;
+static saved6_t sv;
 
 static void app_init(void)
 {
@@ -2332,8 +2797,9 @@ static void app_init(void)
     rng_s ^= fm1_ticks();
     if (!rng_s) rng_s = 1;
     memset(&sv, 0, sizeof sv);
-    if (settings_load(&sv, sizeof sv) == 0) { fx_load(sv.fx, 8); memcpy(chain, sv.chain, CHAIN_N); }
-    else {                                                      /* an older record (v1.0 .. v1.6): its preset has the old layout, and fewer bytes follow it */
+    if (settings_load(&sv, sizeof sv) == 0) { fx_load(sv.fx, 8); memcpy(chain, sv.chain, CHAIN_N); glob.ch[2] = sv.ch2 & 15u; }
+    else {                                                      /* an older record (v1.0 .. v1.7): its preset has an older layout, and fewer bytes follow it */
+        saved5_t o5;
         saved4_t o4;
         saved3_t o3;
         saved2_t o2;
@@ -2341,14 +2807,19 @@ static void app_init(void)
         saved_t o0;
         const saved_t *os = 0;
         memset(&sv, 0, sizeof sv);
-        if (settings_load(&o4, sizeof o4) == 0) { os = &o4.s; memcpy(sv.bt, o4.bt, sizeof o4.bt); fx_load(o4.fx, 8); }
+        if (settings_load(&o5, sizeof o5) == 0) {                 /* v1.7: only the preset's layout differs */
+            fx_load(o5.fx, 8); memcpy(chain, o5.chain, CHAIN_N); memcpy(sv.bt, o5.bt, sizeof o5.bt);
+            preset_from17(&sv.cur, &o5.cur);
+            sv.ver = o5.ver; sv.theme = o5.theme; sv.ch0 = o5.ch0; sv.ch1 = o5.ch1; sv.slot = o5.slot; sv.ch2 = 9;
+        }
+        else if (settings_load(&o4, sizeof o4) == 0) { os = &o4.s; memcpy(sv.bt, o4.bt, sizeof o4.bt); fx_load(o4.fx, 8); }
         else if (settings_load(&o3, sizeof o3) == 0) { os = &o3.s; memcpy(sv.bt, o3.bt, sizeof o3.bt); fx_load(o3.fx, 4); }
         else if (settings_load(&o2, sizeof o2) == 0) { os = &o2.s; memcpy(sv.bt, o2.bt, sizeof o2.bt); }          /* (no delay, sync ...) */
         else if (settings_load(&o1, sizeof o1) == 0) { os = &o1.s; memcpy(sv.bt, o1.bt, sizeof o1.bt); }          /* (no pairing) */
         else if (settings_load(&o0, sizeof o0) == 0) os = &o0;                                                     /* (no radio bytes either) */
         if (os && os->ver == 1u) {
             preset_from16(&sv.cur, &os->cur);
-            sv.ver = 1; sv.theme = os->theme; sv.ch0 = os->ch0; sv.ch1 = os->ch1; sv.slot = os->slot;
+            sv.ver = 1; sv.theme = os->theme; sv.ch0 = os->ch0; sv.ch1 = os->ch1; sv.slot = os->slot; sv.ch2 = 9;
         }
     }
     bt_init(sv.bt);
@@ -2361,10 +2832,10 @@ static void app_init(void)
         for (i = 0; i < 2u; i++) { cur.sc[i].dtime &= 3u; if (cur.sc[i].dfb > 230u) cur.sc[i].dfb = 230u; }
         theme_set(glob.theme);
     }
+    colours_update();
     weights();
     lcd_fill(0, 0, 240, 240, C_BLACK);
-    draw_text_box(0, 90, 240, &FONT_L, APP_NAME, pal[4], 1);
-    draw_text_box(0, 130, 240, &FONT_S, "v" APP_VER, pal[2], 1);
+    touch_ms = fm1_ms;
 }
 
 /* ---- MIDI control change and program change in (CC IN and PROG IN, on the MIDI IN LOOK page). Any channel. Control changes, 0..127 over the range:
@@ -2404,6 +2875,9 @@ static int cc_in(uint32_t cc, uint32_t v)
     else if (cc == 88u) cur.sc[0].rtone = cur.sc[1].rtone = (uint8_t)v8;
     else if (cc == 90u) fxs.pana = (uint8_t)v8;
     else if (cc == 91u) fxs.panb = (uint8_t)v8;
+    else if (cc == 94u) cur.dr_level = (uint8_t)v8;                                       /* the drums: level, shadow and space (both scenes) */
+    else if (cc == 95u) cur.dr_shadow[0] = cur.dr_shadow[1] = (uint8_t)v8;
+    else if (cc == 96u) cur.dr_space[0] = cur.dr_space[1] = (uint8_t)v8;
     else return 0;
     return 1;
 }
@@ -2433,20 +2907,21 @@ static void do_panic(void)                      /* PLAY held, then OCT- and OCT+
 static int cell_fast(uint32_t k)                /* the cells that take bigger steps when the knob is turned fast */
 {
     return k == K_P || k == K_DENS || k == K_SWING || k == K_LDEP || k == K_TIMB || k == K_DLY || k == K_LVL || k == K_BPM || k == K_RSND || k == K_RSIZ ||
-           k == K_RTON || k == K_DFB || k == K_DTN || k == K_PANA || k == K_PANB || (k >= K_ENVA && k <= K_ENVR);
+           k == K_RTON || k == K_DFB || k == K_DTN || k == K_PANA || k == K_PANB || (k >= K_ENVA && k <= K_ENVR) ||
+           k == K_DLVL || k == K_DTONE || k == K_DDEC || k == K_DSHD || k == K_DSPC || k == K_DSND;
 }
 
 static void app_step(void)                      /* one pass of the main loop (a browser calls it by itself) */
 {
     static uint32_t prev, dirty, t_change, save_t0, save_down, save_long, arp_t0, arp_down, arp_long, edit_t0, edit_down,
-                    edit_long, t_ui, mute_t0, play_t0, play_down, play_long, panic_until, rec_t0, rec_down, rec_long;
+                    edit_long, t_ui, mute_t0, play_t0, play_down, play_long, panic_until, rec_t0, rec_down, rec_long, home_t0, home_down, home_long;
     static uint8_t liven[27], booted;
     uint32_t k, keys, down, up, rel, b, now, lit = 0, kk;
     uint8_t st, d1, d2;
     int32_t e0, e1, e2, e3, e4, e5, e6;
     uint32_t slots;
     platform_poll();
-    if (fm1_ms < 1200u) return;                 /* the splash */
+    if (fm1_ms < 1200u) { draw_tick(); return; }                 /* the splash: the boot logo */
     if (!booted) { booted = 1; lcd_fill(0, 0, 240, 240, C_BLACK); last_t = fm1_ticks(); }
     now = fm1_ticks();
 
@@ -2498,6 +2973,9 @@ static void app_step(void)                      /* one pass of the main loop (a 
                         hud_scn = (uint8_t)(edit_sc + 1u);
                         dirty = 1; t_change = fm1_ms;
                     }
+            } else if (cur_half >= 0 && HALF[cur_half].group == G_DRUM && k < (uint32_t)NDR) {    /* on the drum pages the first six lower keys are soft pads */
+                drum_hit(k, 84u, (k == DR_KICK ? 36u : 48u) + cur.root);
+                hud(DR_NAME[k], "PAD", -1);
             } else if (cur_half >= 0 && HALF[cur_half].group == G_FX) {          /* on the FX pages the lower keys are punch-ins: momentary effects on the voice shown */
                 pi_mask |= (uint16_t)(1u << k);
                 hud(PI_NAME[k], pi_voice == 0u ? "A" : pi_voice == 1u ? "B" : "A+B", -1);
@@ -2591,10 +3069,19 @@ static void app_step(void)                      /* one pass of the main loop (a 
     if (b & (1u << BTN_ENV)) goto_group(G_ENV);
     if (b & (1u << BTN_LFO)) goto_group(G_LFO);
     if (b & (1u << BTN_GLO)) goto_group(G_GLO);
-    if (b & (1u << BTN_HOME)) {
+    if (b & (1u << BTN_HOME)) { home_down = 1; home_t0 = fm1_ms; home_long = 0; }
+    if (home_down && !home_long && (fm1_in.buttons & (1u << BTN_HOME)) && fm1_ms - home_t0 > 600u) {    /* long: the drum pages (and out of them) */
+        home_long = 1;
         save_mode = recall_mode = 0;
-        if (cur_half >= 0) cur_half = -1;                                        /* from any page: back to the performance screen */
-        else goto_group(G_HOME);
+        goto_group(G_DRUM);
+    }
+    if (rel & (1u << BTN_HOME)) {
+        if (home_down && !home_long) {
+            save_mode = recall_mode = 0;
+            if (cur_half >= 0) cur_half = -1;                                    /* from any page: back to the performance screen */
+            else goto_group(G_HOME);
+        }
+        home_down = 0;
     }
     if (b & (1u << BTN_SAVE)) {
         if (tr_view == V_COPY && copy_act < 4u) { do_copy(); dirty = 1; t_change = fm1_ms; tr_t0 = fm1_ms; }
@@ -2626,7 +3113,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
     e4 = fm1_enc_take(ENC_KNOB3);
     e5 = fm1_enc_take(ENC_KNOB4);
     e6 = fm1_enc_take(ENC_PRESETS);
-    if (b | rel | down | up | (uint32_t)(e0 | e1 | e2 | e3 | e4 | e5 | e6)) pg_t0 = fm1_ms;      /* a touch: the page stays another 10 s */
+    if (b | rel | down | up | (uint32_t)(e0 | e1 | e2 | e3 | e4 | e5 | e6)) { pg_t0 = fm1_ms; touch_ms = fm1_ms; idle_on = 0; }      /* a touch: the page stays another 10 s, the formation goes */
     if (e0) {
         int32_t n = e0 < 0 ? -e0 : e0, dir = e0 > 0 ? 1 : -1;                    /* (a fast turn can be a few detents) */
         if (n > 8) n = 8;
@@ -2668,6 +3155,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
             } else if (tr_view == V_SYS2) {
                 if (e2) fxs.hint = dr[0] > 0 ? 1u : 0u;
                 if (e3) fxs.recm = dr[1] > 0 ? 1u : 0u;
+                if (e4) fxs.idle = (uint8_t)clampi((int32_t)fxs.idle + dr[2], 0, 3);
             } else {
                 if (e2) { theme_set((uint32_t)((int32_t)glob.theme + (int32_t)NTHEME + dr[0]) % NTHEME); view_drawn = 255; }
                 if (e3) glob.ch[0] = (uint8_t)clampi((int32_t)glob.ch[0] + dr[1], 0, 15);
@@ -2693,6 +3181,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
                 } else {
                     cell_adj(c, cell_fast(c.kind) ? knob_delta((uint32_t)(2 + i), ev[i]) : ev[i]);
                     help_set(c);
+                    pulse_half = cur_half; pulse_i = i; pulse_t0 = fm1_ms;                         /* (the value flashes) */
                     if (cur_half < 0) cell_overlay(c);                                      /* (a page shows its values itself) */
                 }
             }
@@ -2712,11 +3201,13 @@ static void app_step(void)                      /* one pass of the main loop (a 
     if (tr_view && fm1_ms - tr_t0 > 2500u) { tr_view = 0; menu_pg = 0; }
     if (page_auto && fm1_ms - pg_t0 > 1800u) { page_auto = 0; if (cur_half == 1) cur_half = -1; }   /* the page a knob opened closes by itself */
     if (cur_half >= 0 && !page_auto && fm1_ms - pg_t0 > 10000u) cur_half = -1;                      /* a page you have left alone for 10 s: back to the performance screen */
+    idle_on = (fxs.idle && !tr_view && cur_half < 0 && !save_mode && !recall_mode && boot_done && fm1_ms - touch_ms > IDLE_MS[fxs.idle & 3u]) ? 1u : 0u;      /* nothing touched for a while: the formation screen */
     if (!(cur_half >= 0 && HALF[cur_half].group == G_FX)) pi_mask = 0;                              /* the punch-ins are only on the FX pages */
     pi_voice = (uint8_t)half_voice(cur_half);
     if (rec_done) { rec_done = 0; hud("CAPTURED", fxs.recm ? "NOTES + MOTION" : "NOTES", -1); flash(BTN_REC, 3); dirty = 1; t_change = fm1_ms; }
     { static uint32_t t_dsp; if (fm1_ms - t_dsp >= 500u) { uint32_t m = dsp_max; dsp_max = 0; t_dsp = fm1_ms; dsp_pct = m / 1392u; } }   /* % of one 5.8 ms block = 139200 ticks; under 50 is comfortable (docs/RULES.md) */
     weights();
+    colours_update();
     wob_inc = bpm_get(&cur) * 3246u;
     select_view();
     if (fm1_ms - t_ui >= 12u) { t_ui = fm1_ms; leds(lit); }
@@ -2724,7 +3215,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
 
     if (bt_kept(sv.bt)) { dirty = 1; t_change = fm1_ms; }                       /* the radio's address and trims copy: saved with the settings */
     if (dirty && !busy && fm1_ms - t_change > 2000u) {                          /* save when silent: an erase stalls the sound */
-        sv.cur = cur; sv.ver = 1; sv.theme = glob.theme; sv.ch0 = glob.ch[0]; sv.ch1 = glob.ch[1]; sv.slot = glob.slot;
+        sv.cur = cur; sv.ver = 1; sv.theme = glob.theme; sv.ch0 = glob.ch[0]; sv.ch1 = glob.ch[1]; sv.ch2 = glob.ch[2]; sv.slot = glob.slot;
         fx_save(sv.fx);
         memcpy(sv.chain, chain, CHAIN_N);
         settings_save(&sv, sizeof sv);

@@ -20,6 +20,13 @@ typedef struct {               /* proportional, see tools/gen_font.py */
 static uint16_t cv_px[CV_MAX] __attribute__((section(".pool")));
 static uint32_t cv_w, cv_h;
 static int32_t cv_oy;            /* y offset for graph drawing */
+static int32_t cv_ox;            /* x offset, added to every x (a page that slides in) */
+static uint32_t cv_dim = 255;    /* every colour drawn is scaled by this / 255 (a page that fades in) */
+static inline uint16_t cv_dimc(uint16_t c)
+{
+    if (cv_dim >= 255u) return c;
+    return (uint16_t)((((c >> 11) * cv_dim / 255u) << 11) | ((((c >> 5) & 63u) * cv_dim / 255u) << 5) | ((c & 31u) * cv_dim / 255u));
+}
 
 #define RGB(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 #define C_BLACK 0x0000u
@@ -80,14 +87,17 @@ static void cv_blit_from(uint32_t x, uint32_t y, uint32_t r0)
 static inline void cv_pset(int32_t x, int32_t y, uint16_t c)
 {
     y += cv_oy;
+    x += cv_ox;
     if ((uint32_t)x < cv_w && (uint32_t)y < cv_h)
-        cv_px[(uint32_t)y * cv_w + (uint32_t)x] = swap16(c);
+        cv_px[(uint32_t)y * cv_w + (uint32_t)x] = swap16(cv_dimc(c));
 }
 
 static void cv_rect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c)
 {
-    int32_t x1 = x + w, y1 = y + h + cv_oy, i;
-    uint16_t sc = swap16(c);
+    int32_t x1, y1 = y + h + cv_oy, i;
+    uint16_t sc = swap16(cv_dimc(c));
+    x += cv_ox;
+    x1 = x + w;
     y += cv_oy;                             /* clipped once, then filled row by row */
     if (x < 0)
         x = 0;

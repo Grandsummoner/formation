@@ -44,6 +44,8 @@ DSP figure (it shows in the footer from 60 %, in amber, and red from 80 %).
   tiny **dots** at the top right show where you are (they fill up to the page you are on, all of them on the last). Press the same
   button again, or HOME, to go back to the performance screen; a page you leave alone for **10 seconds** closes by itself. SELECT works as the menus
   (below) only on the performance screen.
+* **Colour.** In the RICH and WILD colours each scene takes the colour of its instrument (each of the 27 has its own hue; two alike are told apart), the towers, the frames, the globe and the crossfade take the colour the morph is at between A and B, and every theme is brighter and more saturated. SOFT keeps one colour. MONO and MATRIX keep their own two scene colours.
+* **Motion.** A new page slides in and brightens; a value you turn flashes white and settles; each note sends a ripple out of the globe and the globe swells with it; the boot logo gathers particles into a ring round the name. After a while with nothing touched (IDLE SCREEN in SYSTEM 2: off, 30 seconds, 1 minute or 3 minutes) the screen becomes a **formation**: 36 particles that spring into a shape (a ring, two rings, a spiral, a lattice, a wave, three rings), change shape every seven seconds, scatter when a note sounds and form again. Any touch brings the screen back.
 * **Beginner text** (SYSTEM 2 menu, HELP TEXT): while it is on, each knob you turn brings a short note on what it does, in the bottom third of
   the screen, for four seconds.
 * **LED flashes**: the LED of what an action was about blinks for under a second, as the plugin flashes its buttons. A
@@ -62,11 +64,19 @@ DSP figure (it shows in the footer from 60 %, in amber, and red from 80 %).
 
 | Button | Its pages (top half / bottom half) |
 | --- | --- |
-| **HOME** | GENERATE: entropy, harmony, chaos, morph / RHYTHM: rest, density, swing, legato |
+| **HOME** | GENERATE: entropy, harmony, chaos, morph / RHYTHM: rest, density, swing, legato. **Hold HOME for a second: the DRUM pages** (below); hold it again, or press it, to go back. |
+| **DRUM** (hold HOME) | KIT: DRUMS (on / off), LEVEL, TONE (the brightness of the hats and the brush), DECAY / FEEL: SHDW A, SPCE A, SHDW B, SPCE B (below). Then TUNING: TUNE (the kick and tom, -12 to +12 semitones from the key), FOLLOW, SEND (into the two reverbs) and DRUM CH (the MIDI channel, 10 as General MIDI has it). **The first six lower keys are soft pads** here: kick, tom, brush, rim, hat, open hat. |
 | **FX** | Each voice has its own chain. A VOICE: instrument, timbre, level / A DELAY: send, time (1/16, 1/8, 1/8 dotted, 1/4), feedback, tone; then A REVERB: send, size, bright; then the same three for B; the last page ends with MIX: PAN A and PAN B (L to R, C in the middle). **The lower keys are punch-ins here** (below). |
 | **ENV** | A ENVELOPE / B ENVELOPE: ATTACK, DECAY, SUSTAIN, RELEASE of each voice. Each starts as its instrument's own envelope and is relative to it: the knob moves it up and down (each 20 steps double or halve a time; the sustain is a level), and the page shows the time in ms or s. A new instrument starts again from its own. |
 | **LFO** | Six pages, one for each LFO (MORPH, REST, LEGATO, ENTROPY, HARMONY, CHAOS): on top the wave, drawn with a dot where the LFO is now; below its SHAPE (SINE, TRI, SAW, RAMP, SQUARE, RANDOM), RATE (OFF, then 4 BAR, 2 BAR, 1 BAR, 1/2, 1/4, 1/8, 1/16, 1/32 of the tempo), DEPTH and PHASE (where in its wave it starts). The LFOs start from their phase each time PLAY is pressed. |
 | **GLO** | TEMPO KEY: BPM (1 to 480), step division, transpose, theme / SCALE MIDI: root, scale, MIDI channel of A and of B; then CHORDS: POLY (chords from Harmony), CHORD (STACK, SUS, QUART, ADD9), SPREAD (AUTO, CLOSE, OPEN) / SYNC: SYNC (the MIDI sync out: OFF, START for start and stop only, or CLOCK for the 24-a-beat clock as well) and CLOCK (where the tempo comes from: INT, EXT or AUTO); then AUTO A-B: AUTO (OFF, ONCE, PING, SAW), BARS (1, 2, 4, 8, 16, 32 or 64) and SHAPE (LINEAR or EASE) / MIDI IN LOOK: CC IN and PROG (on or off), COLOUR (SOFT, RICH, WILD) and METER (on or off). |
+
+**The drum voice.** A gentle kit of six, synthesised (no samples): a tuned KICK and TOM, a soft BRUSH snare, a RIM click, a closed HAT and an OPEN hat. It is an accompaniment that follows the melody and keeps out of its way:
+after each step the drums look at what the melody did, and answer it. The kick is the anchor, on the first and the middle of the measure, tuned to the key (the tonic; with FOLLOW on, the fifth on the middle when the melody has left the tonic chord).
+A soft brush falls on the backbeat and on a falling leap of the melody; a tuned tom, the melody's own note an octave down, answers a rising leap; a rim speaks in the gap just after a note; hats fill the gaps; an open hat comes at the end of a phrase or after a big jump.
+**SHDW** (shadow, one for each scene, blended by the A-B crossfade) is how much they answer the melody's events; **SPCE** (space, the same) is how much room they leave: the busier the melody is, the fewer the hits, and with a lot of SPACE they play almost only in its gaps.
+They cannot drown it: the drum level has a ceiling (the top of the knob is about 0.6 of one note of a voice), the kit ducks automatically under the melody (at least 3 dB, deeper under chords), every hit is soft (velocity 100 at most), and they go out on their own MIDI channel as General MIDI drums (kick 36, tom 45, brush 38, rim 37, hat 42, open hat 46).
+Everything is part of the preset (a preset saved before v1.8 has the drums off, so that it sounds as it did). CC 94, 95 and 96 move the level, the shadow and the space.
 
 **Punch-ins.** While an FX page is open the 16 lower keys are momentary effects on the voice the page is about (both on MIX), for as long as you hold them:
 THROW (all of it into the delay), REPEAT (long feedback), DLY 1/16, DLY 1/4, BLOOM (reverb send up), HALL (big reverb), DARK, AIR (the reverb's tone),
@@ -171,7 +181,7 @@ audio time the sound takes. Keep it under about 50 %; if it is higher, use fewer
 
 ### SYSTEM 2 menu
 
-HELP TEXT (knob 1: the beginner text, on or off), REC KEEPS (knob 2: NOTES, or +MOTION) and TAP TEMPO: press SAVE in time, from the last four taps (a pause of two seconds starts again).
+HELP TEXT (knob 1: the beginner text, on or off), REC KEEPS (knob 2: NOTES, or +MOTION), IDLE SCREEN (knob 3: OFF, 30 SEC, 1 MIN, 3 MIN) and TAP TEMPO: press SAVE in time, from the last four taps (a pause of two seconds starts again).
 
 **BLUETOOTH** (knob 4: right is on, left is off) sends everything Formation sends over USB over Bluetooth LE MIDI as
 well, and takes MIDI notes in from a connected device like USB's. It is **off at every power-on**. Switched on, the FM-1
@@ -207,6 +217,6 @@ count (the packets queued for it) once it listens; the performance screen shows 
 * Each reverb uses a few percent of the chip's time while it runs (it stops by itself about four seconds after its voice's sound
   ends, and when its send is 0): watch DSP LOAD in the SYSTEM menu. E PIANO, BELL and ORGAN cost the most of the
   voices (about as much as FM).
-* Presets and settings saved by v1.0 to v1.6 are read and converted when you recall them: the one reverb and the one delay of those versions
+* Presets and settings saved by v1.0 to v1.7 are read and converted when you recall them: the one reverb and the one delay of v1.6 and before
   become the same settings on both voices, ENV is the instrument's own and the LFOs are sines at phase 0, as they were. The first preset you save
   afterwards writes the new layout.
