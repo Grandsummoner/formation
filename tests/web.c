@@ -59,10 +59,10 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 #include "gfx.c"
 
 /* what the FM-1 keeps: the page saves these two buffers (localStorage) and puts them back before it starts */
-static uint8_t host_store[512 + 4];                       /* [0] 1 once saved, [2..3] the length, then the bytes (as the chip's: a record of another length does not load) */
+static uint8_t host_store[1024 + 4];                       /* [0] 1 once saved, [2..3] the length, then the bytes (as the chip's: a record of another length does not load) */
 static int settings_load(void *p, uint32_t n)
 {
-    if (host_store[0] != 1 || n > 512u || (uint32_t)(host_store[2] | host_store[3] << 8) != n) return -1;
+    if (host_store[0] != 1 || n > 1024u || (uint32_t)(host_store[2] | host_store[3] << 8) != n) return -1;
     memcpy(p, host_store + 4, n);
     return 0;
 }
@@ -155,6 +155,6 @@ EXPORT("emu_midi_pop") uint32_t emu_midi_pop(void)   /* 1: a message is waiting 
 EXPORT("emu_midi_tmp") uint32_t emu_midi_tmp(void) { return (uint32_t)(uintptr_t)mo_tmp; }
 EXPORT("emu_fb") uint32_t emu_fb(void) { return (uint32_t)(uintptr_t)fb; }
 EXPORT("emu_led") uint32_t emu_led(void) { return (uint32_t)(uintptr_t)host_led; }      /* 0-13 the buttons, 14+k the keys */
-EXPORT("emu_store") uint32_t emu_store(void) { return (uint32_t)(uintptr_t)host_store; } /* 516 bytes */
+EXPORT("emu_store") uint32_t emu_store(void) { return (uint32_t)(uintptr_t)host_store; } /* 1028 bytes */
 EXPORT("emu_pre") uint32_t emu_pre(void) { return (uint32_t)(uintptr_t)host_pre; }       /* 4096 bytes */
 EXPORT("emu_pre_ok") uint32_t emu_pre_ok(uint32_t set) { if (set) host_pre_ok = 1; return (uint32_t)host_pre_ok; }

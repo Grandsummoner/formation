@@ -3,6 +3,8 @@
 #define main host_main_unused
 #include "../firmware/src/formation.c"
 #undef main
+static preset_t sp(uint32_t k) { preset_t t; memcpy(&t, bank.s[k].data, sizeof t); return t; }          /* the FORMATION preset in a slot */
+static void sp_put(uint32_t k, const preset_t *t) { slot_put(k, MODEL_FORMATION, t, sizeof *t); }
 static int fails = 0;
 #define CHECK(c, msg) do { if (!(c)) { printf("FAIL: %s\n", msg); fails++; } else printf("ok   %s\n", msg); } while (0)
 
@@ -63,13 +65,13 @@ int main(void)
         bank.magic = PRE_MAGIC3;
         memcpy((uint8_t *)&bank + 8, src, sizeof src);
         bank_conv(0);
-        for (k = 0; k < 16u; k++) if (bank.p[k].density != 20 + k || bank.p[k].sc[1].rsize != 50 + k || !(bank.p[k].used & 1u) || bank.p[k].dr_on) break;
+        for (k = 0; k < 16u; k++) { preset_t t = sp(k); if (t.density != 20 + k || t.sc[1].rsize != 50 + k || bank.s[k].model != MODEL_FORMATION || t.dr_on) break; }
         CHECK(k == 16u && bank.magic == PRE_MAGIC, "a PNV3 bank: all sixteen slots converted in place, drums off");
         bank_ok = 1;
-        bank.p[2].dr_on = 1; bank.p[2].dr_shadow[1] = 33; bank.p[2].used = 1;
+        { preset_t t = sp(2); t.dr_on = 1; t.dr_shadow[1] = 33; t.used |= 1u; sp_put(2, &t); }
         bank_save();
         memset(&bank, 0, sizeof bank); bank_ok = 0;
-        CHECK(bank_load() == 0 && bank.p[2].dr_shadow[1] == 33 && bank.p[2].dr_on == 1 && bank.p[5].density == 25, "a PNV4 bank saves and loads");
+        CHECK(bank_load() == 0 && sp(2).dr_shadow[1] == 33 && sp(2).dr_on == 1 && sp(5).density == 25, "a PNV5 bank saves and loads");
         bank_ok = 0;
     }
     {                                                                           /* the v1.7 settings record: read and converted */
@@ -84,7 +86,7 @@ int main(void)
         CHECK(cur.dr_on == 0 && glob.ch[2] == 9, "a v1.7 settings record: drums off, on channel 10 if you turn them on");
         host_store[0] = 0;
         preset_init(&cur); cur.dr_shadow[1] = 77; glob.ch[2] = 3; cur.dr_tune = 131;
-        memset(&sv, 0, sizeof sv); sv.cur = cur; sv.ver = 1; sv.ch2 = glob.ch[2]; fx_save(sv.fx);
+        memset(&sv, 0, sizeof sv); sv.f = cur; sv.ver = 1; sv.ch2 = glob.ch[2]; fx_save(sv.fx);
         settings_save(&sv, sizeof sv);
         cur.dr_shadow[1] = 0; glob.ch[2] = 0; cur.dr_tune = 0;
         app_init();

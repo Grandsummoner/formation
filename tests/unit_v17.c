@@ -3,6 +3,8 @@
 #define main host_main_unused
 #include "../firmware/src/formation.c"
 #undef main
+static preset_t sp(uint32_t k) { preset_t t; memcpy(&t, bank.s[k].data, sizeof t); return t; }          /* the FORMATION preset in a slot */
+static void sp_put(uint32_t k, const preset_t *t) { slot_put(k, MODEL_FORMATION, t, sizeof *t); }
 static int fails = 0;
 #define CHECK(c, msg) do { if (!(c)) { printf("FAIL: %s\n", msg); fails++; } else printf("ok   %s\n", msg); } while (0)
 
@@ -61,7 +63,7 @@ int main(void)
         memcpy((uint8_t *)&bank + 8, src, sizeof src);
         bank_conv(1);
         for (k = 0; k < 16u; k++)
-            if (bank.p[k].density != 10 + k || bank.p[k].sc[1].level != 100 + k || !(bank.p[k].used & 1u) || bank.p[k].sc[0].rsend != 1 + k || bank.p[k].sc[0].rsize != 77) break;
+            { preset_t t = sp(k); if (t.density != 10 + k || t.sc[1].level != 100 + k || bank.s[k].model != MODEL_FORMATION || t.sc[0].rsend != 1 + k || t.sc[0].rsize != 77) break; }
         CHECK(k == 16u && bank.magic == PRE_MAGIC, "a PNV2 bank: all sixteen slots converted in place");
         CHECK(sizeof(prebank_t) <= 4096u, "the new bank fits its flash sector");
         CHECK(sizeof(saved6_t) <= 512u, "the settings record fits the settings sector's buffer");
@@ -205,7 +207,7 @@ int main(void)
         CHECK(mot_on == 1 && rec_mot[3][6] == 200, "REC +MOTION: the parameters at each step are kept");
         CHECK(rec_mot[1][2] != rec_mot[5][2], "REC +MOTION: they differ from step to step as they moved");
         { uint8_t was = effv(2, 5); eff[2] = 7; CHECK(effv(2, 5) == was && was == rec_mot[5][2], "REC +MOTION: SEQ plays the recorded motion, not the live value"); }
-        recall_apply(-1); mot_on = 1; bank.p[0].used = 1; recall_apply(0); CHECK(mot_on == 0, "REC +MOTION: a recalled preset brings no old motion");
+        recall_apply(-1); mot_on = 1; { preset_t t = cur; t.used |= 1u; sp_put(0, &t); } recall_apply(0); CHECK(mot_on == 0, "REC +MOTION: a recalled preset brings no old motion");
         fxs.recm = 0; rec_done = 0;
     }
 
@@ -214,7 +216,7 @@ int main(void)
         uint32_t n, seen[4] = {0, 0, 0, 0};
         preset_init(&cur);
         memset(&bank, 0, sizeof bank); bank_ok = 1;
-        for (i = 0; i < 4u; i++) { bank.p[i] = cur; bank.p[i].used = 1; bank.p[i].density = (uint8_t)(31 + i); }
+        for (i = 0; i < 4u; i++) { preset_t t = cur; t.used |= 1u; t.density = (uint8_t)(31 + i); sp_put(i, &t); }
         memset(chain, 0, sizeof chain);
         chain[0] = 0x80u | (0u << 4) | 0u;                                       /* slot 1, 1 measure */
         chain[1] = 0x80u | (1u << 4) | 2u;                                       /* slot 3, 2 measures */
@@ -297,7 +299,7 @@ int main(void)
         chain[3] = 0x93; fxs.hint = 1;
         host_store[0] = 0;
         memset(&sv, 0, sizeof sv);
-        sv.cur = cur; sv.ver = 1; fx_save(sv.fx); memcpy(sv.chain, chain, CHAIN_N);
+        sv.f = cur; sv.ver = 1; fx_save(sv.fx); memcpy(sv.chain, chain, CHAIN_N);
         settings_save(&sv, sizeof sv);
         cur.sc[1].env[2] = 0; cur.lfo_sp[4] = 0; chain[3] = 0; fxs.hint = 0;
         app_init();

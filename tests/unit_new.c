@@ -23,7 +23,7 @@ int main(void)
     CHECK(cc_in(3, 10) == 0, "an unassigned CC changes nothing");
     /* program change */
     bank_ok = 1;                                                    /* (the bank is set by hand here: pc_in opens it, and must not load over it) */
-    bank.p[3].used = 1; bank.p[3] = cur; bank.p[3].used = 1; bank.p[3].density = 77; running = 0;
+    { preset_t t = cur; t.used |= 1u; t.density = 77; slot_put(3, MODEL_FORMATION, &t, sizeof t); } running = 0;
     pc_in(3); CHECK(cur.density == 77, "program change 3 recalls preset 4 (stopped: at once)");
     pc_in(9); CHECK(cur.density == 77, "a program change to an empty slot does nothing");
     /* pans: a scene hard left sounds only on the left */

@@ -109,7 +109,7 @@ async function boot() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY) || "null");
     if (s) {
-      new Uint8Array(mem(), E.emu_store(), 516).set(b64d(s.store));
+      new Uint8Array(mem(), E.emu_store(), 1028).set(b64d(s.store));
       new Uint8Array(mem(), E.emu_pre(), 4096).set(b64d(s.pre));
       if (s.preOk) E.emu_pre_ok(1);
       saved = localStorage.getItem(KEY);
@@ -118,7 +118,7 @@ async function boot() {
   E.emu_init();
   setInterval(() => {
     try {
-      const s = JSON.stringify({ store: b64e(new Uint8Array(mem(), E.emu_store(), 516)), pre: b64e(new Uint8Array(mem(), E.emu_pre(), 4096)), preOk: E.emu_pre_ok(0) });
+      const s = JSON.stringify({ store: b64e(new Uint8Array(mem(), E.emu_store(), 1028)), pre: b64e(new Uint8Array(mem(), E.emu_pre(), 4096)), preOk: E.emu_pre_ok(0) });
       if (s !== saved) { localStorage.setItem(KEY, s); saved = s; }
     } catch (e) { /* storage blocked */ }
   }, 1000);

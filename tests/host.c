@@ -59,10 +59,10 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 #define CV_MAX (240u * 64u)
 #include "gfx.c"
 
-static uint8_t host_store[512 + 4];                       /* [0] 1 once saved, [2..3] the length, then the bytes (as the chip's: a record of another length does not load) */
+static uint8_t host_store[1024 + 4];                       /* [0] 1 once saved, [2..3] the length, then the bytes (as the chip's: a record of another length does not load) */
 static int settings_load(void *p, uint32_t n)
 {
-    if (host_store[0] != 1 || n > 512u || (uint32_t)(host_store[2] | host_store[3] << 8) != n) return -1;
+    if (host_store[0] != 1 || n > 1024u || (uint32_t)(host_store[2] | host_store[3] << 8) != n) return -1;
     memcpy(p, host_store + 4, n);
     return 0;
 }
