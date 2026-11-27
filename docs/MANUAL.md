@@ -217,6 +217,7 @@ count (the packets queued for it) once it listens; the performance screen shows 
 * Each reverb uses a few percent of the chip's time while it runs (it stops by itself about four seconds after its voice's sound
   ends, and when its send is 0): watch DSP LOAD in the SYSTEM menu. E PIANO, BELL and ORGAN cost the most of the
   voices (about as much as FM).
-* Presets and settings saved by v1.0 to v1.7 are read and converted when you recall them: the one reverb and the one delay of v1.6 and before
+* **Storage (v1.9).** Each saved slot now carries a model tag (the three-model release builds on it), and the settings record keeps a working state for each model. Presets and settings from every earlier version are read and converted automatically. A v1.0 to v1.8 preset becomes a FORMATION preset.
+* Presets and settings saved by v1.0 to v1.8 are read and converted when you recall them: the one reverb and the one delay of v1.6 and before
   become the same settings on both voices, ENV is the instrument's own and the LFOs are sines at phase 0, as they were. The first preset you save
   afterwards writes the new layout.

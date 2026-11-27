@@ -101,7 +101,26 @@ static uint8_t leg_dly[3] = {2, 100, 255};     /* the delay of a v1.0 .. v1.6 re
 static const uint32_t DT_K[4] = {661500u, 1323000u, 1984500u, 2646000u};   /* 44100 * 60 * (1/4 1/2 3/4 1 beat): the delay in samples = K / bpm */
 
 static preset_t cur;                            /* the state you play */
-static struct { uint8_t ver, theme, ch[3], slot; } glob = {1, 0, {0, 1, 9}, 0};      /* ch: MIDI out of A, of B, of the drums (channel 10) */
+/* ---- the three models (v1.9). One runs at a time; each has its own state and its own presets. FORMATION's state is preset_t (above, as in v1.8); LANES and DRIFT have the same
+ * sound part (core_t: the two voices, the tempo and scale, the drums) and their own data after it (a plain byte block here: the engines come with the next milestones, and
+ * lay their lanes and dials over it, so that the saved layout does not change again). A saved slot is a model tag and the largest payload. */
+enum { MODEL_NONE, MODEL_FORMATION, MODEL_LANES, MODEL_DRIFT };
+typedef struct { uint8_t inst, timbre, dsend, level, env[4], dtime, dfb, dtone, rsend, rsize, rtone; } voice_t;           /* 14 B: a voice's sound and its delay and reverb */
+typedef struct {
+    voice_t v[2];
+    uint8_t bpm, div, swing, scale, root, oct_, tr_, used, morph_pos;       /* the tempo (used holds its high bits, as in preset_t), the scale, the transpose */
+    uint8_t dr_on, dr_level, dr_tone, dr_decay, dr_tune, dr_send;           /* the drum voice */
+    uint8_t spare;
+} core_t;                                       /* 44 B */
+typedef struct { core_t c; uint8_t d[190]; } lanes_t;       /* 234 B */
+typedef struct { core_t c; uint8_t d[100]; } drift_t;       /* 144 B */
+#define PAY_B 234                               /* the largest payload of a saved slot */
+typedef char chk_payload[(sizeof(preset_t) <= PAY_B && sizeof(lanes_t) <= PAY_B && sizeof(drift_t) <= PAY_B) ? 1 : -1];
+typedef struct { uint8_t model; uint8_t data[PAY_B]; } pslot_t;     /* 235 B */
+static lanes_t lanes_cur;
+static drift_t drift_cur;
+
+static struct { uint8_t ver, theme, ch[3], slot, model; } glob = {1, 0, {0, 1, 9}, 0, MODEL_FORMATION};      /* ch: MIDI out of A, of B, of the drums (channel 10) */
 
 static void scene_init(scene_t *s, int b)
 {
@@ -145,6 +164,24 @@ static void preset_init(preset_t *p)
     p->dr_on = 1; p->dr_level = 150; p->dr_tone = 110; p->dr_decay = 110; p->dr_tune = 128; p->dr_send = 40; p->dr_follow = 1;
     p->dr_shadow[0] = p->dr_shadow[1] = 140; p->dr_space[0] = p->dr_space[1] = 150;
 }
+static void core_init(core_t *c)                 /* the sound part of LANES and DRIFT: the same two voices and drums as a new FORMATION preset */
+{
+    preset_t p;
+    uint32_t i;
+    preset_init(&p);
+    memset(c, 0, sizeof *c);
+    for (i = 0; i < 2u; i++) {
+        voice_t *v = &c->v[i];
+        const scene_t *q = &p.sc[i];
+        v->inst = q->inst; v->timbre = q->timbre; v->dsend = q->dsend; v->level = q->level;
+        memcpy(v->env, q->env, 4);
+        v->dtime = q->dtime; v->dfb = q->dfb; v->dtone = q->dtone; v->rsend = q->rsend; v->rsize = q->rsize; v->rtone = q->rtone;
+    }
+    c->bpm = p.bpm; c->div = p.div; c->swing = p.swing; c->scale = p.scale; c->root = p.root; c->oct_ = (uint8_t)p.oct; c->tr_ = (uint8_t)p.tr; c->used = p.used; c->morph_pos = p.morph_pos;
+    c->dr_on = p.dr_on; c->dr_level = p.dr_level; c->dr_tone = p.dr_tone; c->dr_decay = p.dr_decay; c->dr_tune = p.dr_tune; c->dr_send = p.dr_send;
+}
+static void lanes_init(lanes_t *l) { memset(l, 0, sizeof *l); core_init(&l->c); }
+static void drift_init(drift_t *d) { memset(d, 0, sizeof *d); core_init(&d->c); }
 static void preset_from17(preset_t *d, const preset17_t *o)     /* a v1.7 preset: the same bytes, then the drums (off: it sounds as it did) */
 {
     preset_init(d);
@@ -1248,31 +1285,35 @@ static void key_note(uint32_t note, int down)   /* a key (or MIDI in) goes down 
 }
 
 /* ================================================================== 5. storage */
-#define PRE_MAGIC 0x34564E50u                   /* "PNV4" */
-#define PRE_MAGIC3 0x33564E50u                  /* "PNV3": v1.7, 16 presets of 106 B after the 8-byte header */
-#define PRE_MAGIC2 0x32564E50u                  /* "PNV2": v1.0 .. v1.6, 16 presets of 80 B after the 8-byte header */
+#define PRE_MAGIC 0x35564E50u                   /* "PNV5": v1.9, 16 slots of a model tag and 234 B after the 8-byte header */
+#define PRE_MAGIC4 0x34564E50u                  /* "PNV4": v1.8, 16 presets of 117 B (the FORMATION preset as it is) */
+#define PRE_MAGIC3 0x33564E50u                  /* "PNV3": v1.7, 16 presets of 106 B */
+#define PRE_MAGIC2 0x32564E50u                  /* "PNV2": v1.0 .. v1.6, 16 presets of 80 B */
 #define PRE16_BYTES (16u * sizeof(preset16_t))
 #define PRE17_BYTES (16u * sizeof(preset17_t))
-typedef struct { uint32_t magic, crc; preset_t p[16]; } prebank_t;
+#define PRE18_BYTES (16u * sizeof(preset_t))
+typedef struct { uint32_t magic, crc; pslot_t s[16]; } prebank_t;
 static prebank_t bank;
 static uint8_t bank_ok;
 
-static void bank_conv(int from16)               /* bank holds an older bank (PNV2 or PNV3): rewrite it in the new layout, last slot first (a new slot is longer, so it never lands on one not yet read) */
+static int slot_used(uint32_t i) { return i < 16u && bank.s[i].model != MODEL_NONE; }
+static void slot_put(uint32_t i, uint32_t model, const void *p, uint32_t n)       /* a slot: the model's tag, then its state */
 {
-    const uint8_t *raw = (const uint8_t *)&bank;
+    memset(&bank.s[i], 0, sizeof bank.s[i]);
+    bank.s[i].model = (uint8_t)model;
+    memcpy(bank.s[i].data, p, n);
+}
+
+static void bank_conv(int kind)                 /* bank holds an older bank (PNV2, PNV3 or PNV4): rewrite it in the new layout, last slot first (a new slot is longer, so it never lands on one not yet read) */
+{
+    const uint8_t *raw = (const uint8_t *)&bank;       /* kind: 0 v1.7, 1 v1.0-1.6, 2 v1.8 */
     int32_t i;
     for (i = 15; i >= 0; i--) {
         preset_t n;
-        if (from16) {
-            preset16_t o;
-            memcpy(&o, raw + 8u + (uint32_t)i * sizeof o, sizeof o);
-            preset_from16(&n, &o);
-        } else {
-            preset17_t o;
-            memcpy(&o, raw + 8u + (uint32_t)i * sizeof o, sizeof o);
-            preset_from17(&n, &o);
-        }
-        memcpy(&bank.p[i], &n, sizeof n);
+        if (kind == 1) { preset16_t o; memcpy(&o, raw + 8u + (uint32_t)i * sizeof o, sizeof o); preset_from16(&n, &o); }
+        else if (kind == 2) memcpy(&n, raw + 8u + (uint32_t)i * sizeof n, sizeof n);
+        else { preset17_t o; memcpy(&o, raw + 8u + (uint32_t)i * sizeof o, sizeof o); preset_from17(&n, &o); }
+        slot_put((uint32_t)i, (n.used & 1u) ? MODEL_FORMATION : MODEL_NONE, &n, sizeof n);
     }
     bank.magic = PRE_MAGIC;
 }
@@ -1284,17 +1325,19 @@ static int bank_load(void)
     memcpy(&bank, host_pre, sizeof bank);
     if (bank.magic == PRE_MAGIC2) { bank_conv(1); return 0; }
     if (bank.magic == PRE_MAGIC3) { bank_conv(0); return 0; }
+    if (bank.magic == PRE_MAGIC4) { bank_conv(2); return 0; }
     return bank.magic == PRE_MAGIC ? 0 : -1;
 #else
     if (!flash_ok || st_read(PRESETS_AT, &bank, 8u)) return -1;
-    if (bank.magic == PRE_MAGIC2 || bank.magic == PRE_MAGIC3) {          /* an older layout: read it, check it, convert it */
-        uint32_t crc = bank.crc, old2 = bank.magic == PRE_MAGIC2, n = old2 ? PRE16_BYTES : PRE17_BYTES;
+    if (bank.magic == PRE_MAGIC2 || bank.magic == PRE_MAGIC3 || bank.magic == PRE_MAGIC4) {          /* an older layout: read it, check it, convert it */
+        uint32_t crc = bank.crc, kind = bank.magic == PRE_MAGIC2 ? 1u : bank.magic == PRE_MAGIC3 ? 0u : 2u,
+                 n = kind == 1u ? PRE16_BYTES : kind == 0u ? PRE17_BYTES : PRE18_BYTES;
         if (st_read(PRESETS_AT, &bank, 8u + n) || crc32((const uint8_t *)&bank + 8u, n) != crc) return -1;
-        bank_conv((int)old2);
+        bank_conv((int)kind);
         return 0;
     }
     if (bank.magic != PRE_MAGIC || st_read(PRESETS_AT, &bank, sizeof bank) || bank.magic != PRE_MAGIC ||
-        crc32((const uint8_t *)bank.p, sizeof bank.p) != bank.crc)
+        crc32((const uint8_t *)bank.s, sizeof bank.s) != bank.crc)
         return -1;
     return 0;
 #endif
@@ -1311,25 +1354,21 @@ static int bank_save(void)
     uint32_t took, hdr[2], i;
     int rc;
     if (!flash_ok) return -1;
-    bank.crc = crc32((const uint8_t *)bank.p, sizeof bank.p);
+    bank.crc = crc32((const uint8_t *)bank.s, sizeof bank.s);
     hdr[0] = bank.magic;
     hdr[1] = bank.crc;
     if ((rc = fl_erase4k(PRESETS_AT, &took)) != 0) return rc;
-    for (i = 0; i < sizeof bank.p; i += 256u) {
-        uint32_t k = sizeof bank.p - i < 256u ? (uint32_t)sizeof bank.p - i : 256u;
-        if ((rc = fl_write(PRESETS_AT + 8u + i, (const uint8_t *)bank.p + i, k)) != 0) return rc;
+    for (i = 0; i < sizeof bank.s; i += 256u) {
+        uint32_t k = sizeof bank.s - i < 256u ? (uint32_t)sizeof bank.s - i : 256u;
+        if ((rc = fl_write(PRESETS_AT + 8u + i, (const uint8_t *)bank.s + i, k)) != 0) return rc;
     }
     return fl_write(PRESETS_AT, (const uint8_t *)hdr, sizeof hdr);   /* the header last: a cut save stays invalid */
 #endif
 }
 static void bank_open(void)
 {
-    uint32_t i;
     if (bank_ok) return;
-    if (bank_load()) {
-        memset(&bank, 0, sizeof bank);
-        for (i = 0; i < 16u; i++) bank.p[i].used = 0;
-    }
+    if (bank_load()) memset(&bank, 0, sizeof bank);
     bank_ok = 1;
 }
 static const uint8_t WHITE_KEY[16] = {0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26};
@@ -1355,8 +1394,8 @@ static void led(uint32_t id, int on)            /* fm1_led_key, unless that LED 
 
 static void recall_apply(int32_t slot)          /* the engine calls it at the end of a measure */
 {
-    if (slot < 0 || slot > 15 || !bank.p[slot].used) return;
-    cur = bank.p[slot];
+    if (slot < 0 || slot > 15 || bank.s[slot].model != MODEL_FORMATION) return;               /* (a slot of another model: that model recalls it) */
+    memcpy(&cur, bank.s[slot].data, sizeof cur);
     glob.slot = (uint8_t)slot;
     mot_on = 0;                                 /* (a capture's motion belongs to the pattern it came with) */
     flash(KEY_LED(WHITE_KEY[slot]), 2);
@@ -1377,7 +1416,7 @@ static void chain_measure(void)                 /* a new measure while the chain
     chain_left = (uint8_t)(1u << (code > 4u ? 4u : code));
     slot = chain[n] & 15u;
     bank_open();
-    if (bank.p[slot].used & 1u) { pend_slot = -1; recall_apply((int32_t)slot); }
+    if (bank.s[slot].model == MODEL_FORMATION) { pend_slot = -1; recall_apply((int32_t)slot); }
     hud_num("CHAIN SLOT", (int32_t)slot + 1, 0);
 }
 
@@ -2341,7 +2380,7 @@ static void draw_slots(void)                    /* the 16 preset slots: filled =
         char t[4], *q = p_num(t, i + 1u);
         uint16_t c = i == glob.slot ? pal[4] : C_A;
         *q = 0;
-        if (bank.p[i].used) { cv_rect(x, y, 24, 24, c); cv_text(x + 12 - text_w(&FONT_S, t) / 2, y + 4, &FONT_S, t, C_BLACK); }
+        if (slot_used(i)) { cv_rect(x, y, 24, 24, c); cv_text(x + 12 - text_w(&FONT_S, t) / 2, y + 4, &FONT_S, t, C_BLACK); }
         else {
             cv_rect(x, y, 24, 1, pal[1]); cv_rect(x, y + 23, 24, 1, pal[1]); cv_rect(x, y, 1, 24, pal[1]); cv_rect(x + 23, y, 1, 24, pal[1]);
             cv_text(x + 12 - text_w(&FONT_S, t) / 2, y + 4, &FONT_S, t, pal[1]);
@@ -2634,7 +2673,7 @@ static void draw_tick(void)
     }
     if (view == V_SLOTS) {
         uint32_t m = (uint32_t)glob.slot ^ ((uint32_t)save_mode << 8);
-        for (i = 0; i < 16u; i++) m = m * 31u + bank.p[i].used;
+        for (i = 0; i < 16u; i++) m = m * 31u + bank.s[i].model;
         if (m != slots_sig) { slots_sig = m; draw_slots(); return; }
         return;
     }
@@ -2684,14 +2723,14 @@ static void do_copy(void)
     case 3: preset_init(&cur); mot_on = 0; hud("INIT", "ALL", -1); flash(KEY_LED(BLACK_KEY[8]), 3); flash(KEY_LED(BLACK_KEY[9]), 3); break;
     case 4:                                                                       /* one saved slot: emptied */
         bank_open();
-        memset(&bank.p[copy_slot & 15u], 0, sizeof bank.p[0]);
+        memset(&bank.s[copy_slot & 15u], 0, sizeof bank.s[0]);
         bank_save();
         hud_num("INIT SLOT", (int32_t)(copy_slot & 15u) + 1, 0);
         flash(KEY_LED(WHITE_KEY[copy_slot & 15u]), 3);
         break;
     default:                                                                      /* all sixteen */
         bank_open();
-        memset(bank.p, 0, sizeof bank.p);
+        memset(bank.s, 0, sizeof bank.s);
         bank_save();
         hud("INIT", "ALL SLOTS", -1);
         break;
@@ -2702,8 +2741,8 @@ static void do_copy(void)
 static void save_slot(uint32_t slot)
 {
     bank_open();
-    bank.p[slot] = cur;
-    bank.p[slot].used |= 1u;                    /* (the other bits of used are the tempo's) */
+    cur.used |= 1u;                             /* (the other bits of used are the tempo's) */
+    slot_put((uint32_t)slot, MODEL_FORMATION, &cur, sizeof cur);
     glob.slot = (uint8_t)slot;
     bank_save();
     flash(KEY_LED(WHITE_KEY[slot]), 1);
@@ -2727,6 +2766,13 @@ typedef struct { saved_t s; uint8_t bt[BT_KEPT]; uint8_t fx[8]; } saved4_t;     
 typedef struct { saved_t s; uint8_t bt[112]; } saved1b_t;                            /* the record of the first Bluetooth builds (197 B) */
 typedef struct { preset17_t cur; uint8_t ver, theme, ch0, ch1, slot; uint8_t bt[BT_KEPT]; uint8_t fx[8]; uint8_t chain[CHAIN_N]; } saved5_t;   /* v1.7 */
 typedef struct { preset_t cur; uint8_t ver, theme, ch0, ch1, slot; uint8_t bt[BT_KEPT]; uint8_t fx[8]; uint8_t chain[CHAIN_N]; uint8_t ch2, spare; } saved6_t;   /* v1.8: + the drums' MIDI channel */
+typedef struct {
+    uint8_t ver, theme, ch0, ch1, ch2, slot, model, spare;
+    uint8_t bt[BT_KEPT]; uint8_t fx[8]; uint8_t chain[CHAIN_N];
+    preset_t f;                                 /* each model's working state: FORMATION, */
+    lanes_t l;                                  /* LANES, */
+    drift_t d;                                  /* DRIFT */
+} saved8_t;                                     /* v1.9 (~660 B: the settings buffer is 1024) */
 
 static void leds(uint32_t lit_notes)
 {
@@ -2747,7 +2793,7 @@ static void leds(uint32_t lit_notes)
     led(BTN_OCT_DOWN, cur.oct < 0);
     led(BTN_OCT_UP, cur.oct > 0);
     for (i = 0; i < 16u; i++) {
-        int on = slots ? (bank.p[i].used != 0 && (i != glob.slot || blink)) : (int)((lit_notes >> WHITE_KEY[i]) & 1u);
+        int on = slots ? (slot_used(i) && (i != glob.slot || blink)) : (int)((lit_notes >> WHITE_KEY[i]) & 1u);
         led(KEY_LED(WHITE_KEY[i]), on);
     }
     for (i = 0; i < 8u; i++) {
@@ -2786,7 +2832,7 @@ static void fx_save(uint8_t *f)
     f[5] = fxs.pana; f[6] = fxs.panb; f[7] = (uint8_t)(fxs.hint | fxs.recm << 1 | (fxs.idle + 1u) << 2);
 }
 
-static saved6_t sv;
+static saved8_t sv;
 
 static void app_init(void)
 {
@@ -2797,8 +2843,11 @@ static void app_init(void)
     rng_s ^= fm1_ticks();
     if (!rng_s) rng_s = 1;
     memset(&sv, 0, sizeof sv);
+    lanes_init(&sv.l); drift_init(&sv.d);                       /* (the states of the models that an older record does not have) */
+    sv.model = MODEL_FORMATION;
     if (settings_load(&sv, sizeof sv) == 0) { fx_load(sv.fx, 8); memcpy(chain, sv.chain, CHAIN_N); glob.ch[2] = sv.ch2 & 15u; }
-    else {                                                      /* an older record (v1.0 .. v1.7): its preset has an older layout, and fewer bytes follow it */
+    else {                                                      /* an older record (v1.0 .. v1.8): its preset has an older layout, and fewer bytes follow it */
+        saved6_t o6;
         saved5_t o5;
         saved4_t o4;
         saved3_t o3;
@@ -2807,9 +2856,16 @@ static void app_init(void)
         saved_t o0;
         const saved_t *os = 0;
         memset(&sv, 0, sizeof sv);
-        if (settings_load(&o5, sizeof o5) == 0) {                 /* v1.7: only the preset's layout differs */
+        lanes_init(&sv.l); drift_init(&sv.d);
+        sv.model = MODEL_FORMATION;
+        if (settings_load(&o6, sizeof o6) == 0) {                 /* v1.8: the same preset, in a smaller record */
+            fx_load(o6.fx, 8); memcpy(chain, o6.chain, CHAIN_N); memcpy(sv.bt, o6.bt, sizeof o6.bt);
+            sv.f = o6.cur;
+            sv.ver = o6.ver; sv.theme = o6.theme; sv.ch0 = o6.ch0; sv.ch1 = o6.ch1; sv.slot = o6.slot; sv.ch2 = o6.ch2;
+        }
+        else if (settings_load(&o5, sizeof o5) == 0) {            /* v1.7: only the preset's layout differs */
             fx_load(o5.fx, 8); memcpy(chain, o5.chain, CHAIN_N); memcpy(sv.bt, o5.bt, sizeof o5.bt);
-            preset_from17(&sv.cur, &o5.cur);
+            preset_from17(&sv.f, &o5.cur);
             sv.ver = o5.ver; sv.theme = o5.theme; sv.ch0 = o5.ch0; sv.ch1 = o5.ch1; sv.slot = o5.slot; sv.ch2 = 9;
         }
         else if (settings_load(&o4, sizeof o4) == 0) { os = &o4.s; memcpy(sv.bt, o4.bt, sizeof o4.bt); fx_load(o4.fx, 8); }
@@ -2818,20 +2874,22 @@ static void app_init(void)
         else if (settings_load(&o1, sizeof o1) == 0) { os = &o1.s; memcpy(sv.bt, o1.bt, sizeof o1.bt); }          /* (no pairing) */
         else if (settings_load(&o0, sizeof o0) == 0) os = &o0;                                                     /* (no radio bytes either) */
         if (os && os->ver == 1u) {
-            preset_from16(&sv.cur, &os->cur);
+            preset_from16(&sv.f, &os->cur);
             sv.ver = 1; sv.theme = os->theme; sv.ch0 = os->ch0; sv.ch1 = os->ch1; sv.slot = os->slot; sv.ch2 = 9;
         }
     }
     bt_init(sv.bt);
     if (sv.ver == 1u) {
-        cur = sv.cur; glob.theme = sv.theme % NTHEME; glob.ch[0] = sv.ch0 & 15u; glob.ch[1] = sv.ch1 & 15u; glob.slot = sv.slot & 15u;
+        cur = sv.f; glob.theme = sv.theme % NTHEME; glob.ch[0] = sv.ch0 & 15u; glob.ch[1] = sv.ch1 & 15u; glob.ch[2] = sv.ch2 & 15u; glob.slot = sv.slot & 15u;
         bpm_set(&cur, (int32_t)bpm_get(&cur));
         cur.div &= 3u; cur.scale %= 10u; cur.root %= 12u; cur.oct = (int8_t)clampi(cur.oct, -3, 3);
         cur.tr = (int8_t)clampi(cur.tr, -12, 12);
         for (i = 0; i < 6u; i++) if (cur.lfo_rate[i] > 8u) cur.lfo_rate[i] = 0;
         for (i = 0; i < 2u; i++) { cur.sc[i].dtime &= 3u; if (cur.sc[i].dfb > 230u) cur.sc[i].dfb = 230u; }
         theme_set(glob.theme);
-    }
+        glob.model = (sv.model >= MODEL_FORMATION && sv.model <= MODEL_DRIFT) ? sv.model : MODEL_FORMATION;
+        lanes_cur = sv.l; drift_cur = sv.d;
+    } else { lanes_init(&lanes_cur); drift_init(&drift_cur); }
     colours_update();
     weights();
     lcd_fill(0, 0, 240, 240, C_BLACK);
@@ -2884,7 +2942,7 @@ static int cc_in(uint32_t cc, uint32_t v)
 static void pc_in(uint32_t prog)
 {
     bank_open();
-    if (prog > 15u || !bank.p[prog].used) return;
+    if (prog > 15u || !slot_used(prog)) return;
     if (running) pend_slot = (int32_t)prog; else recall_apply((int32_t)prog);
     hud("PROGRAM", "", -1);
     { char *q = p_num(hud_val, prog + 1u); *q = 0; }
@@ -2958,7 +3016,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
                 if (save_mode) { save_slot(k); save_mode = 0; hud_num("SAVED SLOT", (int32_t)k + 1, 0); }
                 else if (recall_mode) {
                     bank_open();
-                    if (bank.p[k].used) {
+                    if (slot_used(k)) {
                         if (running) pend_slot = (int32_t)k; else recall_apply((int32_t)k);
                         glob.slot = (uint8_t)k;
                     }
@@ -3215,7 +3273,7 @@ static void app_step(void)                      /* one pass of the main loop (a 
 
     if (bt_kept(sv.bt)) { dirty = 1; t_change = fm1_ms; }                       /* the radio's address and trims copy: saved with the settings */
     if (dirty && !busy && fm1_ms - t_change > 2000u) {                          /* save when silent: an erase stalls the sound */
-        sv.cur = cur; sv.ver = 1; sv.theme = glob.theme; sv.ch0 = glob.ch[0]; sv.ch1 = glob.ch[1]; sv.ch2 = glob.ch[2]; sv.slot = glob.slot;
+        sv.f = cur; sv.l = lanes_cur; sv.d = drift_cur; sv.model = glob.model; sv.ver = 1; sv.theme = glob.theme; sv.ch0 = glob.ch[0]; sv.ch1 = glob.ch[1]; sv.ch2 = glob.ch[2]; sv.slot = glob.slot;
         fx_save(sv.fx);
         memcpy(sv.chain, chain, CHAIN_N);
         settings_save(&sv, sizeof sv);
